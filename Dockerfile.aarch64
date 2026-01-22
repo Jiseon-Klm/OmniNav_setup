@@ -1,0 +1,188 @@
+# =============================================================================
+# OmniNav GPU Dockerfile - aarch64 (ARM64) + CUDA 12.x
+# =============================================================================
+# 이 Dockerfile은 NVIDIA Grace Hopper/Blackwell 등 ARM64 GPU 시스템용입니다.
+# 테스트 환경: NVIDIA GB10, Compute Capability 12.1, Driver 580.x
+#
+# ⚠️  중요: GB10 (sm_121) 지원을 위해 NGC PyTorch 이미지 사용
+#     공식 PyTorch wheel은 sm_121을 지원하지 않습니다!
+#
+# 빌드: docker build -f Dockerfile.aarch64 -t omninav:aarch64 .
+# =============================================================================
+
+# NGC PyTorch 이미지 사용 (GB10 sm_121 지원)
+# aarch64용 최신 버전 확인: https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch
+# GB10 지원이 추가된 25.01 이상 버전 사용
+FROM nvcr.io/nvidia/pytorch:25.01-py3
+
+# 환경 변수 설정
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+
+# 기본 패키지 설치 (NGC 이미지에 이미 많은 패키지가 포함되어 있음)
+# Ubuntu 24.04 (Noble) 호환: libgl1-mesa-glx 제거, libasound2 → libasound2t64, libegl1-mesa → libegl1
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    curl \
+    vim \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libegl1 \
+    libegl-dev \
+    libxrandr2 \
+    libxss1 \
+    libxcursor1 \
+    libxinerama1 \
+    libxi6 \
+    libasound2t64 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# pip 업그레이드 (NGC 이미지에 이미 PyTorch가 설치되어 있음)
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# 공통 Python 의존성 설치 (aarch64 호환)
+RUN pip install --no-cache-dir \
+    numpy==1.26.4 \
+    opencv-python \
+    pillow \
+    matplotlib \
+    scipy \
+    tqdm \
+    omegaconf \
+    hydra-core \
+    numba \
+    qwen-vl-utils==0.0.10 \
+    transformers \
+    accelerate \
+    datasets \
+    safetensors \
+    sentencepiece \
+    einops \
+    peft \
+    trl==0.24.0 \
+    diffusers \
+    "modelscope[datasets]>=1.19" \
+    "gradio>=3.40.0" \
+    fastapi \
+    uvicorn \
+    tensorboard \
+    pandas \
+    nltk \
+    rouge \
+    requests \
+    aiohttp \
+    addict \
+    attrdict \
+    dacite \
+    charset_normalizer \
+    binpacking \
+    importlib_metadata \
+    jieba \
+    openai \
+    oss2 \
+    tiktoken \
+    jsonlines \
+    transformers_stream_generator \
+    zstandard \
+    deepspeed==0.16.0 \
+    liger-kernel \
+    blake3 \
+    pydantic==2.11.7 \
+    pydantic_core==2.33.2
+
+# triton은 aarch64에서 별도 처리 필요 (공식 wheel이 없을 수 있음)
+RUN pip install --no-cache-dir triton || echo "triton installation skipped on aarch64"
+
+# open3d는 aarch64에서 공식 wheel이 없을 수 있음 - 설치 시도
+RUN pip install --no-cache-dir open3d || echo "open3d installation skipped on aarch64"
+
+# cpm_kernels는 x86 전용일 수 있음 - 설치 시도
+RUN pip install --no-cache-dir cpm_kernels || echo "cpm_kernels installation skipped on aarch64"
+
+# 작업 디렉토리 설정
+WORKDIR /workspace
+
+# train_code 의존성 설치
+COPY train_code/requirements.txt /tmp/train_requirements.txt
+COPY train_code/requirements/framework_all.txt /tmp/requirements/framework_all.txt
+RUN cd /tmp && pip install --no-cache-dir -r train_requirements.txt || true
+
+# transformers-main 설치 (editable mode)
+COPY train_code/transformers-main /workspace/train_code/transformers-main
+RUN cd /workspace/train_code/transformers-main && pip install --no-cache-dir -e . || true
+
+# habitat-sim 0.2.3 설치 (OVON용) - aarch64에서 소스 빌드
+RUN cd /tmp && \
+    git clone https://github.com/facebookresearch/habitat-sim.git habitat-sim-ovon && \
+    cd habitat-sim-ovon && \
+    git checkout v0.2.3 && \
+    pip install --no-cache-dir -r requirements.txt && \
+    python setup.py install --headless || echo "habitat-sim 0.2.3 build failed on aarch64" && \
+    cd / && rm -rf /tmp/habitat-sim-ovon
+
+# habitat-sim 0.1.7 설치 (R2R/RxR용) - aarch64에서 소스 빌드
+RUN cd /tmp && \
+    git clone https://github.com/facebookresearch/habitat-sim.git habitat-sim-r2r && \
+    cd habitat-sim-r2r && \
+    git checkout v0.1.7 && \
+    pip install --no-cache-dir -r requirements.txt && \
+    python setup.py install --headless || echo "habitat-sim 0.1.7 build failed on aarch64" && \
+    cd / && rm -rf /tmp/habitat-sim-r2r
+
+# habitat-lab 0.2.3 설치 (OVON용)
+RUN cd /tmp && \
+    git clone https://github.com/chongchong2025/habitat-lab.git habitat-lab-ovon && \
+    cd habitat-lab-ovon && \
+    git checkout v0.2.3_waypoint && \
+    (test -f habitat-baselines/habitat_baselines/rl/requirements.txt && pip install --no-cache-dir -r habitat-baselines/habitat_baselines/rl/requirements.txt || true) && \
+    (test -f habitat-baselines/habitat_baselines/rl/ddppo/requirements.txt && pip install --no-cache-dir -r habitat-baselines/habitat_baselines/rl/ddppo/requirements.txt || true) && \
+    pip install --no-cache-dir -e . && \
+    (test -d habitat-baselines && cd habitat-baselines && pip install --no-cache-dir -e . || true) && \
+    cd / && rm -rf /tmp/habitat-lab-ovon
+
+# habitat-lab 0.1.7 설치 (R2R/RxR용)
+RUN cd /tmp && \
+    git clone https://github.com/facebookresearch/habitat-lab.git habitat-lab-r2r && \
+    cd habitat-lab-r2r && \
+    git checkout v0.1.7 && \
+    (test -f habitat-baselines/habitat_baselines/rl/requirements.txt && pip install --no-cache-dir -r habitat-baselines/habitat_baselines/rl/requirements.txt || true) && \
+    (test -f habitat-baselines/habitat_baselines/rl/ddppo/requirements.txt && pip install --no-cache-dir -r habitat-baselines/habitat_baselines/rl/ddppo/requirements.txt || true) && \
+    pip install --no-cache-dir -e . && \
+    (test -d habitat-baselines && cd habitat-baselines && pip install --no-cache-dir -e . || true) && \
+    cd / && rm -rf /tmp/habitat-lab-r2r
+
+# 프로젝트 코드 복사 (data/, models/ 제외 - 마운트로 사용)
+# 큰 폴더들은 .dockerignore로 제외됨
+COPY infer_r2r_rxr /workspace/OmniNav/infer_r2r_rxr
+COPY infer_ovon /workspace/OmniNav/infer_ovon
+COPY infer_ovon_slowfast /workspace/OmniNav/infer_ovon_slowfast
+COPY VLN-CE /workspace/OmniNav/VLN-CE
+COPY papers /workspace/OmniNav/papers
+COPY train_code /workspace/OmniNav/train_code
+# 설정 파일들
+COPY *.md /workspace/OmniNav/
+COPY *.sh /workspace/OmniNav/
+COPY *.yml /workspace/OmniNav/
+COPY *.yaml /workspace/OmniNav/
+# data/, models/는 런타임에 마운트로 사용
+WORKDIR /workspace/OmniNav
+
+# 기본 명령어
+CMD ["/bin/bash"]
