@@ -1,9 +1,24 @@
 #!/usr/bin/env python3
 """
-iPhone 데이터를 사용한 OmniNav 추론
-infer_r2r_rxr의 evaluate_agent를 베이스로 하되,
-simulator로부터 이미지를 받는 부분만 iPhone 데이터 읽기로 변경
+OmniNav inference using iPhone data
+Based on evaluate_agent from infer_r2r_rxr,
+but replaces simulator image input with iPhone data reading
 """
+# HPC-X/UCC library conflict prevention (NGC container issue)
+# Error: libucc.so.1: undefined symbol: ucs_config_doc_nop
+# LD_PRELOAD must be set before process starts, so auto re-exec
+import os
+import sys
+
+_LD_PRELOAD_LIBS = "/opt/hpcx/ucx/lib/libucs.so.0:/opt/hpcx/ucx/lib/libucp.so.0:/opt/hpcx/ucx/lib/libucm.so.0"
+_REEXEC_VAR = "_OMNINAV_REEXEC"
+
+if os.environ.get(_REEXEC_VAR) != "1" and os.path.exists("/opt/hpcx/ucx/lib/libucs.so.0"):
+    # Re-execute self with correct LD_PRELOAD
+    os.environ["LD_PRELOAD"] = _LD_PRELOAD_LIBS
+    os.environ[_REEXEC_VAR] = "1"
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
 import numpy as np
 import argparse
 import torch
@@ -11,6 +26,7 @@ import os
 import csv
 import json
 import sys
+import time
 from pathlib import Path
 from tqdm import trange
 import cv2
@@ -19,25 +35,25 @@ from datetime import datetime
 
 from agent.waypoint_agent import Waypoint_Agent
 
-# 맵 크기 및 설정
-MAP_SIZE = 1024  # 맵 해상도
-MAP_METERS_PER_PIXEL = 0.05  # 1픽셀 = 0.05m
-MAP_CENTER = (MAP_SIZE // 2, MAP_SIZE // 2)  # 맵 중심
+# Map size and settings
+MAP_SIZE = 1024  # Map resolution
+MAP_METERS_PER_PIXEL = 0.05  # 1 pixel = 0.05m
+MAP_CENTER = (MAP_SIZE // 2, MAP_SIZE // 2)  # Map center
 
 
 def load_instruction(instruction_path):
-    """instruction.txt 읽기"""
+    """Read instruction.txt"""
     with open(instruction_path, 'r', encoding='utf-8') as f:
         return f.read().strip()
 
 
 def load_odometry(odom_path):
-    """odometry.csv 읽기 및 pose 변환
+    """Read odometry.csv and convert pose
     
-    카메라 좌표계 (iPhone): X=오른쪽, Y=아래, Z=앞방향
-    Habitat/로봇 좌표계: X=앞방향, Y=왼쪽, Z=위
+    Camera coordinate system (iPhone): X=right, Y=down, Z=forward
+    Habitat/Robot coordinate system: X=forward, Y=left, Z=up
     
-    변환: 카메라 Z축이 전진이므로 position을 그대로 사용
+    Conversion: Camera Z-axis is forward, so use position as-is
     """
     poses = []
     with open(odom_path, 'r') as f:
@@ -55,16 +71,16 @@ def load_odometry(odom_path):
                 qz = float(row[7])
                 qw = float(row[8])
                 
-                # 카메라 좌표계를 Habitat 좌표계로 변환
-                # 카메라: (x, y, z) = (오른쪽, 아래, 앞방향)
-                # Habitat: (x, y, z) = (앞방향, 왼쪽, 위)
-                # 카메라 Z가 전진이므로 -> Habitat X
-                # 카메라 X가 오른쪽이므로 -> Habitat -Y
-                # 카메라 Y가 아래이므로 -> Habitat Z
+                # Convert camera coordinate system to Habitat coordinate system
+                # Camera: (x, y, z) = (right, down, forward)
+                # Habitat: (x, y, z) = (forward, left, up)
+                # Camera Z is forward -> Habitat X
+                # Camera X is right -> Habitat -Y
+                # Camera Y is down -> Habitat Z
                 
-                # 일단 position은 그대로 사용 (나중에 좌표계 변환 필요하면 수정)
+                # Use position as-is for now (modify later if coordinate conversion needed)
                 position = [x_cam, y_cam, z_cam]
-                rotation = [qw, qx, qy, qz]  # Habitat은 (w, x, y, z) 순서
+                rotation = [qw, qx, qy, qz]  # Habitat uses (w, x, y, z) order
                 
                 poses.append({
                     'frame': frame,
@@ -80,14 +96,14 @@ def load_odometry(odom_path):
 
 
 def get_rgb_images(rgb_dir):
-    """RGB 이미지 목록 가져오기 (정렬)"""
+    """Get RGB image list (sorted)"""
     rgb_path = Path(rgb_dir)
     image_files = sorted(rgb_path.glob("*.png"))
     return [str(p) for p in image_files]
 
 
 def load_rgb_image(image_path):
-    """RGB 이미지 로드 (BGR -> RGB 변환)"""
+    """Load RGB image (BGR -> RGB conversion)"""
     img_bgr = cv2.imread(image_path)
     if img_bgr is None:
         raise ValueError(f"Failed to load image: {image_path}")
@@ -96,18 +112,18 @@ def load_rgb_image(image_path):
 
 
 def create_fake_observations(frame_idx, image_path, instruction, pose):
-    """Simulator observations를 모방한 딕셔너리 생성
+    """Create dictionary mimicking simulator observations
     
-    iPhone 데이터는 front 이미지만 있으므로, left/right는 front로 복제
+    iPhone data only has front image, so left/right are copied from front
     """
     rgb = load_rgb_image(image_path)
     
-    # iPhone 데이터는 front만 있음, left/right는 front로 복제
-    # (실제로는 모델이 'special_token' 모드일 때만 left/right 사용)
+    # iPhone data only has front, left/right are copied from front
+    # (Actually model only uses left/right in 'special_token' mode)
     observations = {
         'front': rgb,
-        'left': rgb.copy(),  # 일단 front로 복제
-        'right': rgb.copy(),  # 일단 front로 복제
+        'left': rgb.copy(),  # Copy from front for now
+        'right': rgb.copy(),  # Copy from front for now
         'rgb': rgb,
         'instruction': {'text': instruction},
         'pose': {
@@ -120,35 +136,35 @@ def create_fake_observations(frame_idx, image_path, instruction, pose):
 
 
 def world_to_map_coords(world_pos, map_center, meters_per_pixel):
-    """월드 좌표를 맵 픽셀 좌표로 변환
+    """Convert world coordinates to map pixel coordinates
     
     Args:
-        world_pos: (x, y) 월드 좌표 (로봇 좌표계: x=좌우, y=전진)
-        map_center: (cx, cy) 맵 중심 픽셀 좌표
-        meters_per_pixel: 미터당 픽셀 수
+        world_pos: (x, y) world coordinates (robot frame: x=left-right, y=forward)
+        map_center: (cx, cy) map center pixel coordinates
+        meters_per_pixel: meters per pixel
     """
     x_world, y_world = world_pos
-    # 로봇 좌표계: x=좌우(왼쪽=-, 오른쪽=+), y=전진(+)
-    # 맵 좌표계: x=열(왼쪽=0), y=행(위=0)
-    # 월드 x가 증가하면 맵 x도 증가, 월드 y가 증가하면 맵 y는 감소 (맵이 위에서 본 뷰)
+    # Robot frame: x=left-right(left=-, right=+), y=forward(+)
+    # Map frame: x=column(left=0), y=row(top=0)
+    # World x increase -> map x increase, world y increase -> map y decrease (top-down view)
     map_x = map_center[0] + int(x_world / meters_per_pixel)
-    map_y = map_center[1] - int(y_world / meters_per_pixel)  # y축 뒤집기
+    map_y = map_center[1] - int(y_world / meters_per_pixel)  # Flip y-axis
     
     return (map_x, map_y)
 
 
 def create_topdown_map_gt_only(odom_poses, current_idx, map_center, meters_per_pixel):
-    """흰 바탕 맵에 GT 경로만 그린 이미지 생성
+    """Create map image with GT path only on white background
     
     Args:
-        odom_poses: Odometry poses 리스트
-        current_idx: 현재 프레임 인덱스
-        map_center: 맵 중심 픽셀 좌표 (cx, cy)
-        meters_per_pixel: 미터당 픽셀 수
+        odom_poses: Odometry poses list
+        current_idx: Current frame index
+        map_center: Map center pixel coordinates (cx, cy)
+        meters_per_pixel: Meters per pixel
     """
     map_img = np.zeros((MAP_SIZE, MAP_SIZE), dtype=np.uint8)
     
-    # GT 경로 그리기 (odometry에서 현재까지의 경로)
+    # Draw GT path (path from odometry up to current frame)
     if current_idx >= 0 and len(odom_poses) > 0:
         gt_path_map_coords = []
         for i in range(min(current_idx + 1, len(odom_poses))):
@@ -165,73 +181,73 @@ def create_topdown_map_gt_only(odom_poses, current_idx, map_center, meters_per_p
             map_coord = world_to_map_coords((rel_x, rel_y), map_center, meters_per_pixel)
             gt_path_map_coords.append(map_coord)
         
-        # GT 경로 선 그리기 (검은색)
+        # Draw GT path line (black)
         for i, coord in enumerate(gt_path_map_coords):
             x, y = coord
             if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
                 map_img[y, x] = 1  # MAP_VALID_POINT
-                cv2.circle(map_img, (x, y), 3, 10, -1)  # 10 = MAP_REFERENCE_POINT (검은색)
+                cv2.circle(map_img, (x, y), 3, 10, -1)  # 10 = MAP_REFERENCE_POINT (black)
                 
                 if i > 0:
                     prev_coord = gt_path_map_coords[i-1]
-                    cv2.line(map_img, prev_coord, coord, 10, 2)  # 검은색
+                    cv2.line(map_img, prev_coord, coord, 10, 2)  # black
     
     return map_img
 
 
 def create_topdown_map_pred_only(pred_path, map_center, meters_per_pixel):
-    """흰 바탕 맵에 예측 경로만 그린 이미지 생성
+    """Create map image with prediction path only on white background
     
     Args:
-        pred_path: 예측 경로 좌표 리스트 [(x, y), ...]
-        map_center: 맵 중심 픽셀 좌표 (cx, cy)
-        meters_per_pixel: 미터당 픽셀 수
+        pred_path: Prediction path coordinate list [(x, y), ...]
+        map_center: Map center pixel coordinates (cx, cy)
+        meters_per_pixel: Meters per pixel
     """
     map_img = np.zeros((MAP_SIZE, MAP_SIZE), dtype=np.uint8)
     
-    # 예측 경로 그리기
+    # Draw prediction path
     if len(pred_path) > 0:
         pred_path_map_coords = []
         for pos in pred_path:
             map_coord = world_to_map_coords(pos, map_center, meters_per_pixel)
             pred_path_map_coords.append(map_coord)
         
-        # 예측 경로 선 그리기 (노란색)
+        # Draw prediction path line (yellow)
         for i, coord in enumerate(pred_path_map_coords):
             x, y = coord
             if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE:
                 map_img[y, x] = 1  # MAP_VALID_POINT
-                cv2.circle(map_img, (x, y), 3, 12, -1)  # 12 = MAP_WAYPOINT_PREDICTION (노란색)
+                cv2.circle(map_img, (x, y), 3, 12, -1)  # 12 = MAP_WAYPOINT_PREDICTION (yellow)
                 
                 if i > 0:
                     prev_coord = pred_path_map_coords[i-1]
-                    cv2.line(map_img, prev_coord, coord, 12, 2)  # 노란색
+                    cv2.line(map_img, prev_coord, coord, 12, 2)  # yellow
     
     return map_img
 
 
 def create_topdown_map_with_path(odom_poses, current_idx, pred_path=[]):
-    """흰 바탕 맵에 GT 경로와 예측 경로를 그린 이미지 생성 (레거시, 이제는 사용 안 함)
+    """Create map image with GT and prediction paths on white background (legacy, no longer used)
     
-    새로운 방식: GT와 예측을 별도로 그려서 세로로 합침
+    New method: Draw GT and prediction separately and stack vertically
     """
-    # 이 함수는 더 이상 사용하지 않지만, 호환성을 위해 유지
-    # create_fake_info를 사용하세요
+    # This function is no longer used but kept for compatibility
+    # Use create_fake_info instead
     info = create_fake_info(odom_poses, current_idx, pred_path)
     return info['gt_map']
 
 
 def create_fake_info(odom_poses, current_idx, pred_path=[]):
-    """Simulator info를 모방한 딕셔너리 생성
+    """Create dictionary mimicking simulator info
     
-    iPhone 데이터에는 topdown map이 없으므로 흰 바탕에 경로를 그린 맵 생성
-    GT와 예측 경로를 별도로 생성하되, 두 경로의 스케일을 맞춤
+    iPhone data has no topdown map, so create map with paths on white background
+    Generate GT and prediction paths separately with matched scale
     """
-    # 1. GT 경로와 예측 경로의 모든 좌표 수집
+    # 1. Collect all coordinates from GT and prediction paths
     all_coords_x = []
     all_coords_y = []
     
-    # GT 경로 좌표 수집
+    # Collect GT path coordinates
     if current_idx >= 0 and len(odom_poses) > 0:
         origin = None
         for i in range(min(current_idx + 1, len(odom_poses))):
@@ -247,55 +263,55 @@ def create_fake_info(odom_poses, current_idx, pred_path=[]):
             all_coords_x.append(rel_x)
             all_coords_y.append(rel_y)
     
-    # 예측 경로 좌표 수집
+    # Collect prediction path coordinates
     if len(pred_path) > 0:
         for pos in pred_path:
             all_coords_x.append(pos[0])
             all_coords_y.append(pos[1])
     
-    # 2. 좌표 범위 계산 (마진 포함)
+    # 2. Calculate coordinate range (with margin)
     if len(all_coords_x) > 0 and len(all_coords_y) > 0:
         min_x, max_x = min(all_coords_x), max(all_coords_x)
         min_y, max_y = min(all_coords_y), max(all_coords_y)
         
-        # 마진 추가 (경로가 맵 가장자리에 닿지 않도록)
-        margin = 2.0  # 미터 단위
+        # Add margin (so path doesn't touch map edge)
+        margin = 2.0  # in meters
         range_x = max(max_x - min_x, 0.1) + 2 * margin
         range_y = max(max_y - min_y, 0.1) + 2 * margin
         
-        # 맵 범위에 맞는 스케일 계산
+        # Calculate scale to fit map range
         map_range_meters = min(range_x, range_y)
         if map_range_meters > 0:
-            # 맵 크기의 80%를 사용하도록 스케일 조정
+            # Adjust scale to use 80% of map size
             available_pixels = MAP_SIZE * 0.8
             meters_per_pixel = map_range_meters / available_pixels
         else:
             meters_per_pixel = MAP_METERS_PER_PIXEL
         
-        # 맵 중심 계산 (GT 경로 시작점이 맵 중심이 되도록)
+        # Calculate map center (GT path start point at map center)
         if current_idx >= 0 and len(odom_poses) > 0:
-            center_world_x = 0.0  # GT 원점 기준
+            center_world_x = 0.0  # Based on GT origin
             center_world_y = 0.0
         else:
-            # 예측 경로만 있는 경우
+            # Only prediction path exists
             center_world_x = (min_x + max_x) / 2
             center_world_y = (min_y + max_y) / 2
         
         map_center = (MAP_SIZE // 2, MAP_SIZE // 2)
     else:
-        # 경로가 없는 경우 기본값 사용
+        # No path, use default values
         map_center = MAP_CENTER
         meters_per_pixel = MAP_METERS_PER_PIXEL
     
-    # 3. 같은 스케일로 GT와 예측 맵 생성
+    # 3. Generate GT and prediction maps with same scale
     gt_map = create_topdown_map_gt_only(odom_poses, current_idx, map_center, meters_per_pixel)
     pred_map = create_topdown_map_pred_only(pred_path, map_center, meters_per_pixel)
     
-    # 두 맵을 세로로 합치기 (GT 위, 예측 아래)
+    # Stack two maps vertically (GT on top, prediction on bottom)
     if gt_map.shape == pred_map.shape:
         combined_map = np.concatenate([gt_map, pred_map], axis=0)
     else:
-        # 크기가 다르면 높이 맞춤
+        # Resize if shapes differ
         target_w = max(gt_map.shape[1], pred_map.shape[1])
         gt_map_resized = cv2.resize(gt_map, (target_w, gt_map.shape[0]), interpolation=cv2.INTER_NEAREST)
         pred_map_resized = cv2.resize(pred_map, (target_w, pred_map.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -303,33 +319,33 @@ def create_fake_info(odom_poses, current_idx, pred_path=[]):
     
     return {
         'top_down_map_vlnce': combined_map,
-        'gt_map': gt_map,  # GT 맵 따로 보관
-        'pred_map': pred_map,  # 예측 맵 따로 보관
+        'gt_map': gt_map,  # GT map stored separately
+        'pred_map': pred_map,  # Prediction map stored separately
     }
 
 
 def evaluate_iphone_data(data_dir, model_path, result_path, max_frames=0):
-    """iPhone 데이터로 추론 실행
+    """Run inference with iPhone data
     
     Args:
-        data_dir: iPhone 데이터 디렉토리 (instruction.txt, odometry.csv, rgb/ 포함)
-        model_path: OmniNav 모델 경로
-        result_path: 결과 저장 경로
-        max_frames: 최대 프레임 수 (0=전체)
+        data_dir: iPhone data directory (contains instruction.txt, odometry.csv, rgb/)
+        model_path: OmniNav model path
+        result_path: Result save path
+        max_frames: Maximum number of frames (0=all)
     """
     data_dir = Path(data_dir)
     
-    # 1. Instruction 로드
+    # 1. Load instruction
     instruction_path = data_dir / 'instruction.txt'
     instruction = load_instruction(instruction_path)
-    print(f"[INFO] Instruction: {instruction}")
+    # print(f"[INFO] Instruction: {instruction}")
     
-    # 2. Odometry 로드
+    # 2. Load odometry
     odom_path = data_dir / 'odometry.csv'
     odom_poses = load_odometry(odom_path)
     print(f"[INFO] Loaded {len(odom_poses)} odometry poses")
     
-    # 3. RGB 이미지 목록 가져오기
+    # 3. Get RGB image list
     rgb_dir = data_dir / 'rgb'
     image_files = get_rgb_images(rgb_dir)
     print(f"[INFO] Found {len(image_files)} RGB images")
@@ -339,17 +355,17 @@ def evaluate_iphone_data(data_dir, model_path, result_path, max_frames=0):
         odom_poses = odom_poses[:max_frames]
         print(f"[INFO] Limited to {len(image_files)} frames")
     
-    # 4. Agent 초기화
+    # 4. Initialize agent
     model_name = '/'.join(model_path.split('/')[-3:])
     result_path_full = os.path.join(result_path, model_name)
     
-    # 로그 파일 설정 (result 폴더 내)
+    # Log file setup (in result folder)
     log_dir = os.path.join(result_path_full, "log")
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(log_dir, f"inference_{timestamp}.log")
     
-    # stdout/stderr를 로그 파일과 콘솔에 동시에 출력하도록 설정
+    # Setup stdout/stderr to output to both log file and console
     class Tee:
         def __init__(self, *files):
             self.files = files
@@ -367,30 +383,30 @@ def evaluate_iphone_data(data_dir, model_path, result_path, max_frames=0):
     sys.stdout = Tee(sys.stdout, log_f)
     sys.stderr = Tee(sys.stderr, log_f)
     
-    print(f"[INFO] Log file: {log_file}")
     print(f"[INFO] All output will be saved to log file")
     
-    # require_map=True로 설정하여 map_vis 생성
+    # Set require_map=True for map_vis generation
     agent = Waypoint_Agent(model_path, result_path_full, require_map=True)
     
-    # 5. 에피소드 ID (현재는 하나의 에피소드로 간주)
-    episode_id = data_dir.name  # 예: 'a1af0cece0'
+    # 5. Episode ID (currently treating as single episode)
+    episode_id = data_dir.name  # e.g., 'a1af0cece0'
     
     agent.reset()
     agent.episode_id = episode_id
     
-    # 6. 프레임별 추론 실행
+    # 6. Run inference per frame
     num_frames = len(image_files)
     
-    results = []
-    pred_path = []  # 예측 경로 누적
-    curr_pos = np.array([0.0, 0.0])  # 현재 위치 (로봇 좌표계)
+    csv_records = []  # CSV output records (frame_idx, subframe_idx, dx, dy, dtheta, arrive, infer_time)
+    pred_path = []  # Accumulated prediction path
+    curr_pos = np.array([0.0, 0.0])  # Current position (robot frame)
+    total_infer_time = 0.0  # Total inference time
     
     for i in trange(num_frames, desc=f"Processing {episode_id}"):
         image_path = image_files[i]
         frame_idx = int(Path(image_path).stem)
         
-        # Odometry에서 해당 프레임의 pose 찾기
+        # Find pose for this frame from odometry
         pose = None
         for p in odom_poses:
             if p['frame'] == frame_idx:
@@ -404,121 +420,127 @@ def evaluate_iphone_data(data_dir, model_path, result_path, max_frames=0):
                 'rotation': [1.0, 0.0, 0.0, 0.0]
             }
         
-        # Observations 생성
+        # Create observations
         obs = create_fake_observations(frame_idx, image_path, instruction, pose)
         
-        # Info 생성 (topdown map에 경로 그리기, 이전 프레임까지의 예측 경로 사용)
-        # 현재 프레임의 예측은 아직 모르므로 이전까지의 경로만 표시
+        # Create info (draw path on topdown map, use prediction path up to previous frame)
+        # Current frame's prediction is not known yet, so only show path up to previous frame
         info = create_fake_info(odom_poses, i, pred_path)
         
-        # Agent act (추론) - info를 전달하여 맵 시각화
+        # Agent act (inference) - pass info for map visualization
+        start_time = time.time()
         with torch.no_grad():
             action = agent.act(obs, info, episode_id)
+        infer_time = time.time() - start_time
+        total_infer_time += infer_time
         
-        # 예측 경로 누적 (action에서 waypoint 추출하여 다음 프레임에서 사용)
+        # Print inference time per frame
+        print(f"[Frame {frame_idx:06d}] Inference time: {infer_time:.3f}s")
+        
+        # Accumulate prediction path (extract waypoint from action for next frame)
         if 'action' in action and len(action['action']) > 0:
-            waypoint = action['action'][0]  # 첫 번째 waypoint
-            # waypoint는 로컬 좌표계 (x, y)
+            waypoint = action['action'][0]  # First waypoint
+            # Waypoint is in local coordinates (x, y)
             curr_pos = curr_pos + np.array([waypoint[0], waypoint[1]]) * 0.3  # PREDICT_SCALE = 0.3
             pred_path.append(curr_pos.copy())
         
-        # 결과 저장
-        result = {
-            'frame': frame_idx,
-            'action': action,
-            'pose': pose
-        }
-        results.append(result)
+        # Save CSV records (all 5 waypoints)
+        # Note: action['action'] already has PREDICT_SCALE=0.3 applied
+        # Restore to original scale for saving (same format as log_to_csv.py)
+        PREDICT_SCALE = 0.3
         
-        # Action 출력 (참고용)
-        if 'arrive_pred' in action:
-            log_parts = [f"arrive={action['arrive_pred']}"]
+        if 'arrive_pred' in action and 'action' in action and 'recover_angle' in action:
+            arrive = int(action['arrive_pred'])
+            waypoints = action['action']  # shape (5, 2), scale already applied
+            recover_angles = action['recover_angle']  # shape (5,)
             
-            # Heading (recover_angle) - Log all 5 values
-            if 'recover_angle' in action:
-                recover_angle = action['recover_angle']
-                if isinstance(recover_angle, np.ndarray):
-                    # Convert to degrees for better readability
-                    recover_angle_deg = np.degrees(recover_angle)
-                    # Flatten if needed
-                    if recover_angle_deg.ndim > 1:
-                        recover_angle_deg = recover_angle_deg.flatten()
-                    
-                    # Format as list string
-                    angle_str = "[" + ", ".join([f"{x:.2f}°" for x in recover_angle_deg]) + "]"
-                    log_parts.append(f"heading={angle_str}")
-                else:
-                    log_parts.append(f"heading={np.degrees(recover_angle):.2f}°")
+            # Flatten if needed
+            if isinstance(waypoints, np.ndarray) and waypoints.ndim > 1:
+                waypoints = waypoints.reshape(-1, 2)
+            if isinstance(recover_angles, np.ndarray) and recover_angles.ndim > 1:
+                recover_angles = recover_angles.flatten()
             
-            # Sin/Cos - Log all values
-            if 'sin_angle' in action:
-                sin_vals = action['sin_angle']
-                if isinstance(sin_vals, np.ndarray):
-                    if sin_vals.ndim > 1: sin_vals = sin_vals.flatten()
-                    sin_str = "[" + ", ".join([f"{x:.4f}" for x in sin_vals]) + "]"
-                    log_parts.append(f"sin={sin_str}")
-                else:
-                    log_parts.append(f"sin={sin_vals:.4f}")
-                    
-            if 'cos_angle' in action:
-                cos_vals = action['cos_angle']
-                if isinstance(cos_vals, np.ndarray):
-                    if cos_vals.ndim > 1: cos_vals = cos_vals.flatten()
-                    cos_str = "[" + ", ".join([f"{x:.4f}" for x in cos_vals]) + "]"
-                    log_parts.append(f"cos={cos_str}")
-                else:
-                    log_parts.append(f"cos={cos_vals:.4f}")
-
-            # Waypoint - Log first one as before
-            if 'action' in action and len(action['action']) > 0:
-                wp = action['action'][0]
-                log_parts.append(f"wp[0]=({wp[0]:.4f}, {wp[1]:.4f})")
+            # Save each of 5 waypoints as CSV record
+            for subframe_idx in range(min(5, len(waypoints))):
+                # Restore to original scale (/ PREDICT_SCALE)
+                dx = waypoints[subframe_idx][0] / PREDICT_SCALE
+                dy = waypoints[subframe_idx][1] / PREDICT_SCALE
+                dtheta = np.degrees(recover_angles[subframe_idx]) if subframe_idx < len(recover_angles) else 0.0
+                
+                csv_records.append({
+                    'frame_idx': frame_idx,
+                    'subframe_idx': subframe_idx,
+                    'dx': float(dx),
+                    'dy': float(dy),
+                    'dtheta': float(dtheta),
+                    'arrive': arrive,
+                    'infer_time_s': float(infer_time) if subframe_idx == 0 else 0.0  # Record once per frame
+                })
             
-            print(f"Frame {frame_idx}: " + ", ".join(log_parts))
+            # Simple log output (first waypoint only)
+            wp = waypoints[0]
+            dtheta0 = np.degrees(recover_angles[0]) if len(recover_angles) > 0 else 0.0
+            print(f"  -> arrive={arrive}, dtheta={dtheta0:.2f}, wp[0]=({wp[0]:.4f}, {wp[1]:.4f})")
     
-    # 7. Agent reset (GIF 저장)
+    # 7. Agent reset (save GIF)
     agent.reset()
     
-    # 8. 결과 저장 (JSON) - log_dir는 이미 정의됨
-    results_file = os.path.join(log_dir, f"stats_{episode_id}.json")
+    # 8. Print inference time statistics
+    avg_infer_time = total_infer_time / num_frames if num_frames > 0 else 0.0
+    print(f"\n{'='*60}")
+    print(f"[TIMING] Total inference time: {total_infer_time:.3f}s")
+    print(f"[TIMING] Average inference time per frame: {avg_infer_time:.3f}s")
+    print(f"[TIMING] FPS: {1.0/avg_infer_time:.2f}" if avg_infer_time > 0 else "[TIMING] FPS: N/A")
+    print(f"{'='*60}\n")
     
-    # 간단한 통계만 저장
+    # 9. Save CSV results (waypoint data)
+    csv_file = os.path.join(log_dir, f"waypoint_data_{episode_id}.csv")
+    with open(csv_file, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['frame_idx', 'subframe_idx', 'dx', 'dy', 'dtheta', 'arrive', 'infer_time_s'])
+        writer.writeheader()
+        writer.writerows(csv_records)
+    
+    print(f"[INFO] CSV saved: {csv_file} ({len(csv_records)} records, {len(csv_records)//5} frames)")
+    
+    # 10. Save statistics (JSON)
+    stats_file = os.path.join(log_dir, f"stats_{episode_id}.json")
     stats = {
         'id': episode_id,
         'num_frames': num_frames,
-        'instruction': instruction
+        'instruction': instruction,
+        'csv_file': csv_file
     }
     
-    with open(results_file, 'w') as f:
+    with open(stats_file, 'w') as f:
         json.dump(stats, f, indent=4)
     
-    print(f"\n[INFO] Results saved to: {results_file}")
+    print(f"[INFO] Stats saved: {stats_file}")
     print(f"[INFO] Visualization saved to: {result_path_full}")
     print(f"[INFO] Log file: {log_file}")
     
-    # stdout/stderr 복원
+    # Restore stdout/stderr
     sys.stdout = original_stdout
     sys.stderr = original_stderr
     log_f.close()
     
-    return results
+    return csv_records
 
 
 def main():
-    parser = argparse.ArgumentParser(description='iPhone 데이터 OmniNav 추론')
+    parser = argparse.ArgumentParser(description='OmniNav inference with iPhone data')
     
     parser.add_argument(
         "--data-dir",
         type=str,
         required=True,
-        help="iPhone 데이터 디렉토리 (instruction.txt, odometry.csv, rgb/ 포함)"
+        help="iPhone data directory (contains instruction.txt, odometry.csv, rgb/)"
     )
     
     parser.add_argument(
         "--model-path",
         type=str,
         required=True,
-        help="OmniNav 모델 경로"
+        help="OmniNav model path"
     )
     
     parser.add_argument(
@@ -526,7 +548,7 @@ def main():
         type=str,
         required=False,
         default="./data/result_iphone",
-        help="결과 저장 경로"
+        help="Result save path"
     )
     
     parser.add_argument(
@@ -534,7 +556,7 @@ def main():
         type=int,
         required=False,
         default=0,
-        help="최대 프레임 수 (0=전체)"
+        help="Maximum number of frames (0=all)"
     )
     
     args = parser.parse_args()
@@ -549,4 +571,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

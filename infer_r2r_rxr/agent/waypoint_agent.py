@@ -476,7 +476,7 @@ Based on these information, you need to decide your next {num_action_trunck} act
 
         print('current image_indices: {}'.format(self.image_indices))
         end_time = time.time()
-        print(f"add_frame 耗时: {end_time - start_time} 秒")
+        print(f"add_frame elapsed: {end_time - start_time:.4f}s")
 
     def act(self, observations, info, episode_id):
 
@@ -599,14 +599,14 @@ Based on these information, you need to decide your next {num_action_trunck} act
         start_time = time.time()
         navigation_qs = self.generate_infer_prompt(observations["instruction"]["text"])
         end_time = time.time()
-        print(f"generate_infer_prompt 耗时: {end_time - start_time} 秒")
+        print(f"generate_infer_prompt elapsed: {end_time - start_time:.4f}s")
 
         start_time = time.time()
-        print("question")
-        print(navigation_qs)
+        # print("question")
+        # print(navigation_qs)
         wp_pred_, src_arrive_pred, sin_angle, cos_angle = self.model.qwen_infer(navigation_qs)
         end_time = time.time()
-        print(f"qwen_infer 耗时: {end_time - start_time} 秒")
+        print(f"qwen_infer elapsed: {end_time - start_time:.4f}s")
         if flow_match:
             print(src_arrive_pred.squeeze())
             cnt = 0
