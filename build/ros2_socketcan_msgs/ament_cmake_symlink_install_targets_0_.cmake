@@ -1,0 +1,1 @@
+ament_cmake_symlink_install_targets("TARGET_FILES" "/workspace/OmniNav/build/ros2_socketcan_msgs/rosidl_generator_py/ros2_socketcan_msgs/ros2_socketcan_msgs_s__rosidl_typesupport_fastrtps_c.so" "TARGETS" "ros2_socketcan_msgs_s__rosidl_typesupport_fastrtps_c" "DESTINATION" "lib/python3.12/site-packages/ros2_socketcan_msgs")

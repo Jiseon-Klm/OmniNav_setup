@@ -1,0 +1,1 @@
+/workspace/OmniNav/build/scout_mini_msgs/ament_cmake_core/scout_mini_msgsConfig.cmake

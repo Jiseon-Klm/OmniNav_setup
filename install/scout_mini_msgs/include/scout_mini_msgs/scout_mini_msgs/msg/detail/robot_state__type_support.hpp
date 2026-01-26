@@ -1,0 +1,1 @@
+/workspace/OmniNav/build/scout_mini_msgs/rosidl_generator_cpp/scout_mini_msgs/msg/detail/robot_state__type_support.hpp

@@ -6,7 +6,7 @@ import math
 import csv
 
 input_file = '../data/OmniNav/log/waypoint_data_Sample_data.csv'
-output_file = '../data/OmniNav/log/result4.png'
+output_file = '../data/OmniNav/log/result5.png'
 
 # Read CSV
 data = []

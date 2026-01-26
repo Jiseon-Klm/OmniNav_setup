@@ -1,0 +1,1 @@
+ament_cmake_symlink_install_targets("TARGET_FILES" "/workspace/OmniNav/build/scout_mini_msgs/rosidl_generator_py/scout_mini_msgs/scout_mini_msgs_s__rosidl_typesupport_c.so" "TARGETS" "scout_mini_msgs_s__rosidl_typesupport_c" "DESTINATION" "lib/python3.12/site-packages/scout_mini_msgs")

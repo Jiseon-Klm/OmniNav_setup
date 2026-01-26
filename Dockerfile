@@ -173,6 +173,7 @@ RUN apt-get update && apt-get install -y \
     python3-rosdep \
     python3-colcon-common-extensions \
     python3-vcstool \
+    ros-jazzy-compressed-image-transport
     && rm -rf /var/lib/apt/lists/*
 
 # rosdep 초기화
@@ -209,6 +210,19 @@ RUN mkdir build && cd build && \
     find . -name "pyrealsense2*.so" -exec cp {} $PY_SITE/ \; || \
     find /usr/local/lib -name "pyrealsense2*.so" -exec cp {} $PY_SITE/ \; || true
 
+# =============================================================================
+# ROS2 Control 및 추가 의존성 설치
+# =============================================================================
+RUN apt-get update && apt-get install -y \
+    ros-jazzy-xacro \
+    ros-jazzy-robot-state-publisher \
+    ros-jazzy-ros2-control \
+    ros-jazzy-ros2-controllers \
+    ros-jazzy-controller-manager \
+    ros-jazzy-twist-mux \
+    ros-jazzy-joint-state-broadcaster \
+    ros-jazzy-diff-drive-controller \
+    && rm -rf /var/lib/apt/lists/*
 # =============================================================================
 # Scout Mini ROS2 설치 및 빌드
 # =============================================================================

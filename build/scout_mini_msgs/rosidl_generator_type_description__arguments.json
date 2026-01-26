@@ -1,0 +1,16 @@
+{
+  "package_name": "scout_mini_msgs",
+  "output_dir": "/workspace/OmniNav/build/scout_mini_msgs/rosidl_generator_type_description/scout_mini_msgs",
+  "idl_tuples": [
+    "/workspace/OmniNav/build/scout_mini_msgs/rosidl_adapter/scout_mini_msgs:msg/DriverState.idl",
+    "/workspace/OmniNav/build/scout_mini_msgs/rosidl_adapter/scout_mini_msgs:msg/FaultState.idl",
+    "/workspace/OmniNav/build/scout_mini_msgs/rosidl_adapter/scout_mini_msgs:msg/LightCommand.idl",
+    "/workspace/OmniNav/build/scout_mini_msgs/rosidl_adapter/scout_mini_msgs:msg/LightState.idl",
+    "/workspace/OmniNav/build/scout_mini_msgs/rosidl_adapter/scout_mini_msgs:msg/MotorState.idl",
+    "/workspace/OmniNav/build/scout_mini_msgs/rosidl_adapter/scout_mini_msgs:msg/RobotState.idl"
+  ],
+  "include_paths": [
+    "builtin_interfaces:/opt/ros/jazzy/share/builtin_interfaces",
+    "std_msgs:/opt/ros/jazzy/share/std_msgs"
+  ]
+}

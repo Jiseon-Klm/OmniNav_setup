@@ -1,0 +1,175 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-484235358bd5154f2223.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9
+					]
+				},
+				{
+					"build" : "gtest",
+					"jsonFile" : "directory-gtest-0908a8c91ddba5d6c989.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/opt/ros/jazzy/src/gtest_vendor",
+					"targetIndexes" : 
+					[
+						0,
+						1
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "ros2_socketcan",
+					"targetIndexes" : 
+					[
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "gtest",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0,
+						1
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest-17f991017ebb54ac1067.json",
+					"name" : "gtest",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest_main::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest_main-8c6971129c3100b4b917.json",
+					"name" : "gtest_main",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ros2_socketcan::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ros2_socketcan-6651a70f20dcef091dc2.json",
+					"name" : "ros2_socketcan",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ros2_socketcan_test::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ros2_socketcan_test-b17ac0dcbc8cd037bb97.json",
+					"name" : "ros2_socketcan_test",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ros2_socketcan_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ros2_socketcan_uninstall-c452f83ef2cb53a59bc1.json",
+					"name" : "ros2_socketcan_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "socket_can_receiver_node::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-socket_can_receiver_node-021c700e5fd88c711d65.json",
+					"name" : "socket_can_receiver_node",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "socket_can_receiver_node_exe::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-socket_can_receiver_node_exe-896b720c3202c3bf8009.json",
+					"name" : "socket_can_receiver_node_exe",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "socket_can_sender_node::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-socket_can_sender_node-bc7855f27eaedec3ae5a.json",
+					"name" : "socket_can_sender_node",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "socket_can_sender_node_exe::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-socket_can_sender_node_exe-c66c76921c3c43a069ad.json",
+					"name" : "socket_can_sender_node_exe",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-fb1b729fe0576a04df00.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/workspace/OmniNav/build/ros2_socketcan",
+		"source" : "/workspace/OmniNav/src/ros2_socketcan/ros2_socketcan"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

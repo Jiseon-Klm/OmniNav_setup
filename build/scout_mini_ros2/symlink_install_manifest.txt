@@ -1,0 +1,15 @@
+/workspace/OmniNav/install/scout_mini_ros2/share/ament_index/resource_index/package_run_dependencies/scout_mini_ros2
+/workspace/OmniNav/install/scout_mini_ros2/share/ament_index/resource_index/parent_prefix_path/scout_mini_ros2
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/environment/ament_prefix_path.sh
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/environment/ament_prefix_path.dsv
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/environment/path.sh
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/environment/path.dsv
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/local_setup.bash
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/local_setup.sh
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/local_setup.zsh
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/local_setup.dsv
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/package.dsv
+/workspace/OmniNav/install/scout_mini_ros2/share/ament_index/resource_index/packages/scout_mini_ros2
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/cmake/scout_mini_ros2Config.cmake
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/cmake/scout_mini_ros2Config-version.cmake
+/workspace/OmniNav/install/scout_mini_ros2/share/scout_mini_ros2/package.xml

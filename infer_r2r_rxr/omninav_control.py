@@ -36,7 +36,7 @@ class OmniNavController(Node):
     
     # Robot parameters (Scout Mini)
     MAX_LINEAR_VEL = 0.7      # m/s (최대 추론속도 반영)
-    MAX_ANGULAR_VEL = 0.5235  # rad/s (30 deg/s)
+    MAX_ANGULAR_VEL = 1.5708  # rad/s (90 deg/s)
     ACTION_DURATION = 0.2     # seconds per waypoint
     CONTROL_RATE = 5          # Hz (control loop frequency)
     
@@ -120,9 +120,13 @@ class OmniNavController(Node):
             
             with self.lock:
                 # Update waypoint queue (replace previous queue)
+                # 새로운 waypoint가 들어오면 현재 실행 중인 것을 중단하고 새 것으로 시작
                 self.waypoint_queue = waypoints
                 self.arrive_flag = (arrive_pred > 0)
                 self.new_waypoints_received = True
+                # 현재 실행 중인 waypoint 중단 (새로운 추론 결과가 우선)
+                if self.is_executing:
+                    self.get_logger().info(f"  >> Interrupting current waypoint execution for new inference")
                 
             self.get_logger().info(f"[Frame {frame_count}] Received {len(waypoints)} waypoints, arrive={arrive_pred}")
             

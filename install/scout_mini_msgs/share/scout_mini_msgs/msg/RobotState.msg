@@ -1,0 +1,1 @@
+/workspace/OmniNav/src/scout_mini_ros2/scout_mini_msgs/msg/RobotState.msg
