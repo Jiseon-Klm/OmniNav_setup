@@ -285,12 +285,14 @@ class Waypoint_Agent():
             self.promt_template = """You are an autonomous navigation robot. You will get a task with historical pictures and current pictures you see.
 Based on these information, you need to decide your next {num_action_trunck} actions, which could involve <|left|>,<|right|>,<|forward|>. If you finish your mission, output <|stop|>. Here are some examples: <|left|><|forward|><|forward|><|stop|>, <|forward|><|forward|><|forward|><|left|><|forward|> or <|stop|>
 # Your historical pictures are: {history_img_string}
+# Your historical poses are: {history_pose_string}
 # {current_img_string}
 # Your mission is: {instruction}<|NAV|>"""
         else:
             self.promt_template = """You are an autonomous navigation robot. You will get a task with historical pictures and current pictures you see.
 Based on these information, you need to decide your next {num_action_trunck} actions, which could involve <|left|>,<|right|>,<|forward|>. If you finish your mission, output <|stop|>. Here are some examples: <|left|><|forward|><|forward|><|stop|>, <|forward|><|forward|><|forward|><|left|><|forward|> or <|stop|>
 # Your historical pictures are: {history_img_string}
+# Your historical poses are: {history_pose_string}
 # {current_img_string}
 # Your mission is: {instruction}<|NAV|>\nOutput the waypoint"""
         print("Initialization Complete")
