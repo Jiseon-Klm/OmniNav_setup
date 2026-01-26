@@ -126,3 +126,7 @@ docker ps
 ## 📖 Documentation
 
 See [docs/iphone_inference_guide.md](docs/iphone_inference_guide.md) for detailed instructions.
+
+
+
+Walk forward towards the black chair in front of you. Once you reach the chair, make a left turn. Then, continue walking straight, following the white table on your right side. When you see the end of the white table, make a right turn. Approach the blue door in front of you, get close to it, and stop to finalize the trajectory.
