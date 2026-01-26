@@ -24,6 +24,7 @@ import threading
 import cv2
 from datetime import datetime
 
+
 # ROS2 imports
 import rclpy
 from rclpy.node import Node
@@ -344,14 +345,12 @@ class OmniNavOnlineInference:
         Args:
             action: Action dictionary from inference
         """
-        PREDICT_SCALE = 0.3
-        
         if 'arrive_pred' not in action or 'action' not in action or 'recover_angle' not in action:
             print("[OmniNav Online] Invalid action format, skipping publish")
             return None
         
         arrive = int(action['arrive_pred'])
-        waypoints = action['action']  # shape (5, 2), scale already applied
+        waypoints = action['action']  # shape (5, 2), already in meters (scale applied by waypoint_agent)
         recover_angles = action['recover_angle']  # shape (5,)
         
         # Flatten if needed
@@ -360,11 +359,11 @@ class OmniNavOnlineInference:
         if isinstance(recover_angles, np.ndarray) and recover_angles.ndim > 1:
             recover_angles = recover_angles.flatten()
         
-        # Build waypoint list (restore to original scale)
+        # Build waypoint list (waypoints are already in meters)
         waypoint_list = []
         for i in range(min(5, len(waypoints))):
-            dx = float(waypoints[i][0] / PREDICT_SCALE)
-            dy = float(waypoints[i][1] / PREDICT_SCALE)
+            dx = float(waypoints[i][0])  # Already in meters
+            dy = float(waypoints[i][1])  # Already in meters
             dtheta = float(np.degrees(recover_angles[i])) if i < len(recover_angles) else 0.0
             
             waypoint_list.append({
