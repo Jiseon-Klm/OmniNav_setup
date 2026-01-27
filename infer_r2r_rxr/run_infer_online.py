@@ -31,6 +31,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
+import math
 
 from agent.waypoint_agent import Waypoint_Agent
 
@@ -49,122 +50,76 @@ def load_rgb_image_from_array(img_bgr: np.ndarray) -> np.ndarray:
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     return img_rgb
 
+import math  # 상단 import에 math가 없으면 추가해주세요
 
 def draw_waypoint_arrows_fpv(
     img: np.ndarray,
     waypoints: list,
-    arrow_len: int = 30,
-    arrow_gap: int = 5,
     arrow_color: tuple = (0, 255, 0),
     arrow_thickness: int = 3,
     tipLength: float = 0.3,
-    stop_color: tuple = (0, 0, 255),
-    stop_radius: int = 8,
-    base_y_ratio: float = 0.95
+    stop_color: tuple = (255, 0, 0),
+    stop_radius: int = 10,
+    scale_factor: float = 0.3,     # [설정] 네트워크 출력값 스케일링
+    vis_scale: float = 150.0       # [설정] 미터 -> 픽셀 변환 비율 (화면 크기에 맞춰 조절)
 ) -> np.ndarray:
     """
-    Draw waypoint arrows on first-person view image
-    
-    Args:
-        img: RGB image (H, W, 3)
-        waypoints: List of waypoint dicts with 'dx', 'dy', 'dtheta', 'arrive'
-        arrow_len: Length of arrow in pixels
-        arrow_gap: Gap between arrows in pixels
-        arrow_color: Arrow color (R, G, B)
-        arrow_thickness: Arrow line thickness
-        tipLength: Arrow tip length ratio
-        stop_color: Stop indicator color
-        stop_radius: Stop indicator radius
-        base_y_ratio: Base Y position ratio (0.95 = 95% from top, bottom of image)
-        
-    Returns:
-        RGB image with arrows drawn
+    [수정됨] Dead Reckoning 로직 적용 + OpenCV 네이티브 드로잉
     """
     out = img.copy()
     h, w = out.shape[:2]
     
-    # Base position: center bottom of image
-    base_x = w // 2
-    base_y = int(h * base_y_ratio)
+    # 시작점: 화면 하단 중앙
+    start_pixel = (w // 2, h - 30)
     
-    # Draw arrows from bottom to top (first waypoint at bottom, last at top)
-    for i, wp in enumerate(waypoints):
-        dx = wp.get('dx', 0.0)
-        dy = wp.get('dy', 0.0)
-        dtheta = wp.get('dtheta', 0.0)  # degrees
-        arrive = wp.get('arrive', 0)
-        
-        # Calculate arrow position (stacked from bottom to top)
-        y_pos = int(base_y - i * (arrow_len + arrow_gap))
-        start = (base_x, y_pos)
-        
-        # Check if arrived (stop indicator)
-        if arrive > 0:
-            # Draw stop circle
-            cv2.circle(out, start, stop_radius, stop_color, -1)
-            # Draw text "STOP"
-            cv2.putText(out, "STOP", (start[0] - 20, start[1] + 5), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        else:
-            # Calculate arrow direction from waypoint (dx, dy)
-            # 
-            # Robot coordinate system (waypoint):
-            # - dx: forward direction (X-axis, + = forward)
-            # - dy: left direction (Y-axis, + = left)
-            # - This is a standard robot frame: X=forward, Y=left
-            # 
-            # Image coordinate system:
-            # - x: rightward (+)
-            # - y: downward (+)
-            # - Image directions:
-            #   * Up (forward) = -π/2
-            #   * Right = 0
-            #   * Down (backward) = π/2
-            #   * Left = π (or -π)
-            # 
-            # Coordinate transformation:
-            # - Robot forward (X+, Y=0) → Image up (-π/2)
-            # - Robot left (X=0, Y+) → Image left (π)
-            # - Robot right (X=0, Y-) → Image right (0)
-            # - Robot backward (X-, Y=0) → Image down (π/2)
-            
-            # Calculate angle in robot coordinate system
-            # atan2(dy, dx) = atan2(Y, X): angle from X-axis (forward)
-            # - dx > 0, dy = 0: forward (0 radians)
-            # - dx = 0, dy > 0: left (π/2 radians)
-            # - dx = 0, dy < 0: right (-π/2 radians)
-            # - dx < 0, dy = 0: backward (π radians)
-            # - Any combination: full 360 degrees supported
-            robot_angle = np.arctan2(dy, dx)
-            
-            # Convert to image coordinate system
-            # Formula: img_angle = -robot_angle - π/2
-            # This maps:
-            # - robot 0 (forward) → image -π/2 (up) ✓
-            # - robot π/2 (left) → image -π (left) ✓
-            # - robot -π/2 (right) → image 0 (right) ✓
-            # - robot π (backward) → image -3π/2 = π/2 (down) ✓
-            img_angle = -robot_angle - np.pi / 2
-            
-            # Normalize angle to [-π, π] range for consistency
-            img_angle = np.arctan2(np.sin(img_angle), np.cos(img_angle))
-            
-            # Calculate end point using image coordinate system
-            # x increases rightward, y increases downward
-            end_x = int(start[0] + arrow_len * np.cos(img_angle))
-            end_y = int(start[1] + arrow_len * np.sin(img_angle))
-            end = (end_x, end_y)
-            
-            # Draw arrow
-            cv2.arrowedLine(out, start, end, arrow_color, arrow_thickness, 
-                          tipLength=tipLength, line_type=cv2.LINE_AA)
-            
-            # Draw waypoint index (optional, for debugging)
-            cv2.putText(out, f"{i+1}", (start[0] + 15, start[1] + 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, arrow_color, 1)
-    
-    return out
+    # 로컬 누적 좌표 초기화 (항상 0,0,0에서 시작)
+    Gx, Gy, Gtheta = 0.0, 0.0, 0.0
+    prev_pixel = start_pixel
 
+    for i, wp in enumerate(waypoints):
+        dx_net = wp.get('dx', 0.0)
+        dy_net = wp.get('dy', 0.0)
+        dtheta_deg = wp.get('dtheta', 0.0)
+        arrive = wp.get('arrive', 0)
+
+        # 1. Body Frame 변환 (x:전방, y:좌측)
+        dx_net_scaled = dx_net * scale_factor
+        dy_net_scaled = dy_net * scale_factor
+        
+        x_body = dy_net_scaled
+        y_body = -dx_net_scaled
+
+        # 2. 로컬 적분 (Dead Reckoning)
+        delta_Gx = x_body * math.cos(Gtheta) - y_body * math.sin(Gtheta)
+        delta_Gy = x_body * math.sin(Gtheta) + y_body * math.cos(Gtheta)
+
+        Gx += delta_Gx
+        Gy += delta_Gy
+        Gtheta += math.radians(dtheta_deg)
+
+        # 3. 화면 좌표 매핑 (전방->위쪽, 좌측->왼쪽)
+        screen_x = int(start_pixel[0] - (Gy * vis_scale))
+        screen_y = int(start_pixel[1] - (Gx * vis_scale))
+        
+        # 화면 밖으로 나가는 것 방지
+        screen_x = np.clip(screen_x, 0, w - 1)
+        screen_y = np.clip(screen_y, 0, h - 1)
+        curr_pixel = (screen_x, screen_y)
+
+        if arrive > 0:
+            cv2.circle(out, curr_pixel, stop_radius, stop_color, -1)
+            cv2.putText(out, "STOP", (curr_pixel[0]-20, curr_pixel[1]-10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            break 
+        else:
+            # 이동량이 너무 작으면 화살표 그리기 생략 (에러 방지)
+            if np.linalg.norm(np.array(curr_pixel) - np.array(prev_pixel)) > 2:
+                cv2.arrowedLine(out, prev_pixel, curr_pixel, arrow_color, arrow_thickness, 
+                                tipLength=tipLength, line_type=cv2.LINE_AA)
+            
+        prev_pixel = curr_pixel
+
+    return out
 
 class OmniNavOnlineInference:
     """Real-time OmniNav inference with RealSense camera"""
@@ -340,17 +295,15 @@ class OmniNavOnlineInference:
         return action, infer_time
     
     def publish_action(self, action: dict):
-        """Publish action to /action topic as JSON string
-        
-        Args:
-            action: Action dictionary from inference
+        """
+        [수정됨] 첫 번째 웨이포인트만 추출하여 /action 토픽으로 발행
         """
         if 'arrive_pred' not in action or 'action' not in action or 'recover_angle' not in action:
             print("[OmniNav Online] Invalid action format, skipping publish")
             return None
         
         arrive = int(action['arrive_pred'])
-        waypoints = action['action']  # shape (5, 2), already in meters (scale applied by waypoint_agent)
+        waypoints = action['action']  # shape (5, 2)
         recover_angles = action['recover_angle']  # shape (5,)
         
         # Flatten if needed
@@ -359,23 +312,38 @@ class OmniNavOnlineInference:
         if isinstance(recover_angles, np.ndarray) and recover_angles.ndim > 1:
             recover_angles = recover_angles.flatten()
         
-        # Build waypoint list (waypoints are already in meters)
-        waypoint_list = []
+        # 1. 전체 웨이포인트 리스트 생성 (시각화용)
+        full_waypoint_list = []
+        
+        # 디버깅: waypoints 정보 출력
+        print(f"[Frame {self.frame_count:04d}] DEBUG: waypoints shape={waypoints.shape if isinstance(waypoints, np.ndarray) else type(waypoints)}, len={len(waypoints) if hasattr(waypoints, '__len__') else 'N/A'}")
+        
         for i in range(min(5, len(waypoints))):
-            dx = float(waypoints[i][0])  # Already in meters
-            dy = float(waypoints[i][1])  # Already in meters
+            dx = float(waypoints[i][0])
+            dy = float(waypoints[i][1])
             dtheta = float(np.degrees(recover_angles[i])) if i < len(recover_angles) else 0.0
             
-            waypoint_list.append({
+            full_waypoint_list.append({
                 'dx': dx,
                 'dy': dy,
                 'dtheta': dtheta,
                 'arrive': arrive
             })
         
-        # Create JSON message
+        # full_waypoint_list는 항상 5개여야 함
+        if len(full_waypoint_list) != 5:
+            print(f"[Frame {self.frame_count:04d}] WARNING: full_waypoint_list has {len(full_waypoint_list)} items, expected 5!")
+        
+        # 2. [핵심 수정] 제어용으로는 '첫 번째' 웨이포인트만 리스트에 담음
+        if len(full_waypoint_list) > 0:
+            control_waypoint_list = [full_waypoint_list[0]]
+        else:
+            control_waypoint_list = []
+            print(f"[Frame {self.frame_count:04d}] ERROR: full_waypoint_list is empty!")
+
+        # Create JSON message (제어용 리스트 전송)
         msg_data = {
-            'waypoints': waypoint_list,
+            'waypoints': control_waypoint_list,  # 여기에는 1개만 들어감
             'arrive_pred': arrive,
             'timestamp': time.time(),
             'frame_count': self.frame_count
@@ -383,22 +351,33 @@ class OmniNavOnlineInference:
         
         msg = String()
         msg.data = json.dumps(msg_data)
+        
+        # Check subscription count before publishing
+        subscription_count = self.action_pub.get_subscription_count()
+        if subscription_count == 0:
+            print(f"[OmniNav Online] WARNING: No subscribers for /action topic! (frame {self.frame_count})")
+        else:
+            print(f"[OmniNav Online] Publishing to {subscription_count} subscriber(s)")
+        
         self.action_pub.publish(msg)
         
         # Log
-        wp = waypoint_list[0]
-        print(f"[Frame {self.frame_count:04d}] Published: arrive={arrive}, "
-              f"wp[0]=(dx={wp['dx']:.3f}, dy={wp['dy']:.3f}, dtheta={wp['dtheta']:.1f}°)")
+        if control_waypoint_list:
+            wp = control_waypoint_list[0]
+            print(f"[Frame {self.frame_count:04d}] Published 1st Action: arrive={arrive}, "
+                  f"dx={wp['dx']:.3f}, dy={wp['dy']:.3f}, dtheta={wp['dtheta']:.1f}°")
         
-        return waypoint_list  # Return for visualization
-    
+        # 리턴은 전체 리스트를 반환해서 화면에는 5개 화살표가 다 보이게 함 (디버깅용)
+        return full_waypoint_list
+        
     def run_loop(self, inference_interval: float = 1.0):
-        """Main inference loop
+        """Main inference loop - Step-by-Step Mode"""
         
-        Args:
-            inference_interval: Time between inferences in seconds (default 1.0s)
-        """
-        print(f"\n[OmniNav Online] Starting inference loop (interval: {inference_interval}s)")
+        # [설정] 로봇이 실제로 움직일 시간 (제어 노드와 맞춰야 함)
+        # 이 시간이 지나야 다음 이미지를 찍습니다.
+        ROBOT_MOVE_DURATION = 1.0  
+        
+        print(f"\n[OmniNav Online] Starting Step-by-Step Loop (Move Duration: {ROBOT_MOVE_DURATION}s)")
         print("[OmniNav Online] Waiting for first image...")
         
         # Wait for first image
@@ -414,9 +393,12 @@ class OmniNavOnlineInference:
         
         try:
             while True:
-                loop_start = time.time()
+                # ---------------------------------------------------------
+                # 1. 이미지 획득 (항상 최신 이미지를 가져와야 함)
+                # ---------------------------------------------------------
+                # 로봇이 멈춘 직후의 깨끗한 이미지를 얻기 위해 잠시 대기할 수도 있음
+                # time.sleep(0.1) 
                 
-                # Get latest image
                 image, timestamp = self.get_latest_image()
                 
                 if image is None:
@@ -424,38 +406,46 @@ class OmniNavOnlineInference:
                     time.sleep(0.1)
                     continue
                 
-                # Run inference
+                # ---------------------------------------------------------
+                # 2. 추론 (Inference)
+                # ---------------------------------------------------------
                 action, infer_time = self.run_inference(image)
-                
                 print(f"[Frame {self.frame_count:04d}] Inference time: {infer_time:.3f}s")
                 
-                # Publish action and get waypoint list for visualization
+                # ---------------------------------------------------------
+                # 3. 액션 퍼블리시 (로봇 출발 신호)
+                # ---------------------------------------------------------
                 waypoint_list = self.publish_action(action)
                 
-                # Visualize waypoints on image
-                if waypoint_list is not None:
+                # ---------------------------------------------------------
+                # 4. 시각화 (Visualization) - [수정됨]
+                # ---------------------------------------------------------
+                if waypoint_list is not None and len(waypoint_list) > 0:
+                    # 위에서 만든 함수를 호출해 화살표가 그려진 이미지를 받음
                     vis_image = draw_waypoint_arrows_fpv(image, waypoint_list)
-                    # Store visualized frame (make a copy to avoid reference issues)
-                    self.vis_frame_list.append(vis_image.copy())
-                
-                # Check if arrived
-                if action.get('arrive_pred', 0) > 0:
+                    self.vis_frame_list.append(vis_image)  # <-- 중요: 그려진 이미지를 저장
+                else:
+                    self.vis_frame_list.append(image.copy()) # 데이터 없으면 원본 저장     
+                # ---------------------------------------------------------
+                # 5. [핵심] 로봇 이동 대기 (Sleep)
+                # ---------------------------------------------------------
+                # 도착(Stop) 상태가 아니라면, 로봇이 움직일 시간을 줍니다.
+                if action.get('arrive_pred', 0) == 0:
+                    print(f"  >> Moving robot for {ROBOT_MOVE_DURATION}s...")
+                    # 로봇이 실제로 움직이는 시간동안 대기 (이 동안은 다음 이미지 안 찍음)
+                    time.sleep(ROBOT_MOVE_DURATION)
+                    
+                else:
                     print("\n" + "=" * 60)
                     print("[OmniNav Online] ARRIVED! Navigation complete.")
                     print("=" * 60)
-                    # Continue running but log arrival
-                
-                # Wait for next inference cycle
-                elapsed = time.time() - loop_start
-                sleep_time = max(0, inference_interval - elapsed)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
                     
         except KeyboardInterrupt:
             print("\n[OmniNav Online] Stopping...")
         finally:
             self.shutdown()
-    
+
+
     def shutdown(self):
         """Clean up resources and save video"""
         print("[OmniNav Online] Shutting down...")
@@ -503,10 +493,12 @@ class OmniNavOnlineInference:
             print(f"[OmniNav Online] Error: Failed to create video file")
             return
         
-        # Write frames (convert RGB to BGR for OpenCV)
+        # Write frames
         for frame in self.vis_frame_list:
+            # [수정됨] RGB(Matplotlib/PIL 기준) -> BGR(OpenCV 비디오 기준) 변환
             frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             video_writer.write(frame_bgr)
+            
         
         video_writer.release()
         print(f"[OmniNav Online] Video saved: {video_path}")
@@ -582,4 +574,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
