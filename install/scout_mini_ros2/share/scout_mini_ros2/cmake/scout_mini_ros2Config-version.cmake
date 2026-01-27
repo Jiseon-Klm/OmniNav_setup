@@ -1,1 +1,0 @@
-/workspace/OmniNav/build/scout_mini_ros2/ament_cmake_core/scout_mini_ros2Config-version.cmake

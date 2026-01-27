@@ -1,1 +1,0 @@
-/workspace/OmniNav/build/ros2_socketcan_msgs/rosidl_generator_c/ros2_socketcan_msgs/msg/detail/fd_frame__struct.h

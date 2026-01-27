@@ -1,1 +1,0 @@
-/workspace/OmniNav/src/scout_mini_ros2/scout_mini_description/launch/rviz2_launch.py

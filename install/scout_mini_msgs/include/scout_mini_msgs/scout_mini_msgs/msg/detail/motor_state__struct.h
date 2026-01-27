@@ -1,1 +1,0 @@
-/workspace/OmniNav/build/scout_mini_msgs/rosidl_generator_c/scout_mini_msgs/msg/detail/motor_state__struct.h

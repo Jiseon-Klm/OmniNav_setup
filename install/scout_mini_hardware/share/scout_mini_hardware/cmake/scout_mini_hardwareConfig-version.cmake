@@ -1,1 +1,0 @@
-/workspace/OmniNav/build/scout_mini_hardware/ament_cmake_core/scout_mini_hardwareConfig-version.cmake
