@@ -147,6 +147,8 @@ class QwenModel():
             attn_implementation="eager",  # GB10 호환성을 위해 eager 사용
             low_cpu_mem_usage=True  # 메모리 효율적인 로딩
         )
+        # Log dtype for debugging - check after model is loaded
+        print(f"Model loaded with dtype: {next(self.model.parameters()).dtype}")
         print("✅ 모델 로드 완료 (eager mode, 메모리 최적화)")
         
         # torch.compile과 triton 관련 최적화는 GB10에서 호환성 문제로 제외

@@ -33,7 +33,7 @@ import csv
 # Configuration
 # ============================================================
 input_file = './OmniNav/log/waypoint_data_Test18.csv'
-output_file = './results/Test18_trajectory.png'
+output_file = './results/Test18_trajectory_v2.png'
 PREDICT_SCALE = 0.3  # Network output scaling factor
 
 # ============================================================
