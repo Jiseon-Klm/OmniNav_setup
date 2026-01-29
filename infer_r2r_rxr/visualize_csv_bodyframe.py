@@ -32,8 +32,8 @@ import csv
 # ============================================================
 # Configuration
 # ============================================================
-input_file = 'waypoint_data_0e1a1b3126.csv'
-output_file = 'global_traj_0e1a1b3126_bodyframe.png'
+input_file = './OmniNav/log/waypoint_data_Test18.csv'
+output_file = './results/Test18_trajectory.png'
 PREDICT_SCALE = 0.3  # Network output scaling factor
 
 # ============================================================
@@ -127,7 +127,7 @@ for i in range(0, len(trajectory), arrow_freq):
     dx_arrow = arrow_scale * math.cos(theta)
     dy_arrow = arrow_scale * math.sin(theta)
     color = cmap(norm(i))
-    ax.arrow(x, y, dx_arrow, dy_arrow, head_width=0.08, head_length=0.04, 
+    ax.arrow(x, y, dx_arrow, dy_arrow, head_width=0.2, head_length=0.2, 
              fc=color, ec=color, alpha=0.8)
 
 # Mark start and end points

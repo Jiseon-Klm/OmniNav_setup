@@ -19,11 +19,12 @@ import numpy as np
 import argparse
 import torch
 import json
+import csv
 import time
 import threading
 import cv2
 from datetime import datetime
-
+import math
 
 # ROS2 imports
 import rclpy
@@ -31,7 +32,6 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
-import math
 
 from agent.waypoint_agent import Waypoint_Agent
 
@@ -50,7 +50,6 @@ def load_rgb_image_from_array(img_bgr: np.ndarray) -> np.ndarray:
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     return img_rgb
 
-import math  # 상단 import에 math가 없으면 추가해주세요
 
 def draw_waypoint_arrows_fpv(
     img: np.ndarray,
@@ -146,6 +145,10 @@ class OmniNavOnlineInference:
         self.vis_frame_list = []  # Store visualized frames for video
         self.save_video = True  # Save video on shutdown
         
+        # CSV records for waypoint data
+        self.csv_records = []
+        self.total_infer_time = 0.0
+        
         # Initialize ROS2
         rclpy.init()
         self.ros_node = rclpy.create_node('omninav_inference')
@@ -224,38 +227,6 @@ class OmniNavOnlineInference:
         """ROS2 spin in background thread"""
         rclpy.spin(self.ros_node)
     
-    def _create_observations(self, rgb_image: np.ndarray) -> dict:
-        """Create observations dictionary mimicking simulator format
-        
-        Identical to run_infer_iphone.py's create_fake_observations()
-        """
-        # Default pose (no odometry in online mode)
-        # Same structure as run_infer_iphone.py
-        default_pose = {
-            'position': [0.0, 0.0, 0.0],
-            'rotation': [1.0, 0.0, 0.0, 0.0]
-        }
-        
-        # Identical structure to run_infer_iphone.py's create_fake_observations()
-        observations = {
-            'front': rgb_image,
-            'left': rgb_image.copy(),  # Copy from front for now (same as run_infer_iphone.py)
-            'right': rgb_image.copy(),  # Copy from front for now (same as run_infer_iphone.py)
-            'rgb': rgb_image,
-            'instruction': {'text': self.instruction},
-            'pose': default_pose
-        }
-        
-        return observations
-    
-    def _create_info(self) -> dict:
-        """Create info dictionary (minimal, no topdown map in online mode)"""
-        return {
-            'top_down_map_vlnce': None,
-            'gt_map': None,
-            'pred_map': None,
-        }
-    
     def get_latest_image(self) -> tuple:
         """Get the latest image (thread-safe)
         
@@ -267,37 +238,8 @@ class OmniNavOnlineInference:
                 return self.latest_image.copy(), self.image_timestamp
             return None, None
     
-    def run_inference(self, rgb_image: np.ndarray) -> dict:
-        """Run OmniNav inference on a single image
-        
-        This is the core inference loop, identical to run_infer_iphone.py
-        
-        Args:
-            rgb_image: RGB image (H, W, 3)
-            
-        Returns:
-            action dictionary with waypoints
-        """
-        # Create observations (identical to run_infer_iphone.py)
-        obs = self._create_observations(rgb_image)
-        
-        # Create info (minimal for online mode)
-        info = self._create_info()
-        
-        # Run inference (identical to run_infer_iphone.py)
-        start_time = time.time()
-        with torch.no_grad():
-            action = self.agent.act(obs, info, "online_session")
-        infer_time = time.time() - start_time
-        
-        self.frame_count += 1
-        
-        return action, infer_time
-    
     def publish_action(self, action: dict):
-        """
-        [수정됨] 첫 번째 웨이포인트만 추출하여 /action 토픽으로 발행
-        """
+        """Publish first waypoint to /action topic, return full waypoint list for visualization"""
         if 'arrive_pred' not in action or 'action' not in action or 'recover_angle' not in action:
             print("[OmniNav Online] Invalid action format, skipping publish")
             return None
@@ -312,12 +254,8 @@ class OmniNavOnlineInference:
         if isinstance(recover_angles, np.ndarray) and recover_angles.ndim > 1:
             recover_angles = recover_angles.flatten()
         
-        # 1. 전체 웨이포인트 리스트 생성 (시각화용)
+        # Create full waypoint list (for visualization)
         full_waypoint_list = []
-        
-        # 디버깅: waypoints 정보 출력
-        print(f"[Frame {self.frame_count:04d}] DEBUG: waypoints shape={waypoints.shape if isinstance(waypoints, np.ndarray) else type(waypoints)}, len={len(waypoints) if hasattr(waypoints, '__len__') else 'N/A'}")
-        
         for i in range(min(5, len(waypoints))):
             dx = float(waypoints[i][0])
             dy = float(waypoints[i][1])
@@ -330,20 +268,16 @@ class OmniNavOnlineInference:
                 'arrive': arrive
             })
         
-        # full_waypoint_list는 항상 5개여야 함
-        if len(full_waypoint_list) != 5:
-            print(f"[Frame {self.frame_count:04d}] WARNING: full_waypoint_list has {len(full_waypoint_list)} items, expected 5!")
-        
-        # 2. [핵심 수정] 제어용으로는 '첫 번째' 웨이포인트만 리스트에 담음
+        # Control: publish only first waypoint
         if len(full_waypoint_list) > 0:
             control_waypoint_list = [full_waypoint_list[0]]
         else:
-            control_waypoint_list = []
             print(f"[Frame {self.frame_count:04d}] ERROR: full_waypoint_list is empty!")
+            return None
 
-        # Create JSON message (제어용 리스트 전송)
+        # Create JSON message
         msg_data = {
-            'waypoints': control_waypoint_list,  # 여기에는 1개만 들어감
+            'waypoints': control_waypoint_list,
             'arrive_pred': arrive,
             'timestamp': time.time(),
             'frame_count': self.frame_count
@@ -356,26 +290,20 @@ class OmniNavOnlineInference:
         subscription_count = self.action_pub.get_subscription_count()
         if subscription_count == 0:
             print(f"[OmniNav Online] WARNING: No subscribers for /action topic! (frame {self.frame_count})")
-        else:
-            print(f"[OmniNav Online] Publishing to {subscription_count} subscriber(s)")
         
         self.action_pub.publish(msg)
         
-        # Log
-        if control_waypoint_list:
-            wp = control_waypoint_list[0]
-            print(f"[Frame {self.frame_count:04d}] Published 1st Action: arrive={arrive}, "
-                  f"dx={wp['dx']:.3f}, dy={wp['dy']:.3f}, dtheta={wp['dtheta']:.1f}°")
-        
-        # 리턴은 전체 리스트를 반환해서 화면에는 5개 화살표가 다 보이게 함 (디버깅용)
+        # Return full list for visualization
         return full_waypoint_list
         
     def run_loop(self, inference_interval: float = 1.0):
         """Main inference loop - Step-by-Step Mode"""
         
         # [설정] 로봇이 실제로 움직일 시간 (제어 노드와 맞춰야 함)
-        # 이 시간이 지나야 다음 이미지를 찍습니다.
-        ROBOT_MOVE_DURATION = 1.0  
+        ROBOT_MOVE_DURATION = 1.0
+        
+        # PREDICT_SCALE (same as run_infer_iphone.py)
+        PREDICT_SCALE = 0.3
         
         print(f"\n[OmniNav Online] Starting Step-by-Step Loop (Move Duration: {ROBOT_MOVE_DURATION}s)")
         print("[OmniNav Online] Waiting for first image...")
@@ -393,12 +321,7 @@ class OmniNavOnlineInference:
         
         try:
             while True:
-                # ---------------------------------------------------------
-                # 1. 이미지 획득 (항상 최신 이미지를 가져와야 함)
-                # ---------------------------------------------------------
-                # 로봇이 멈춘 직후의 깨끗한 이미지를 얻기 위해 잠시 대기할 수도 있음
-                # time.sleep(0.1) 
-                
+                # 1. 이미지 획득
                 image, timestamp = self.get_latest_image()
                 
                 if image is None:
@@ -406,39 +329,90 @@ class OmniNavOnlineInference:
                     time.sleep(0.1)
                     continue
                 
-                # ---------------------------------------------------------
-                # 2. 추론 (Inference)
-                # ---------------------------------------------------------
-                action, infer_time = self.run_inference(image)
+                # 2. Create observations (inline, same as run_infer_iphone.py)
+                default_pose = {
+                    'position': [0.0, 0.0, 0.0],
+                    'rotation': [1.0, 0.0, 0.0, 0.0]
+                }
+                obs = {
+                    'front': image,
+                    'left': image.copy(),
+                    'right': image.copy(),
+                    'rgb': image,
+                    'instruction': {'text': self.instruction},
+                    'pose': default_pose
+                }
+                
+                # 3. Create info (minimal for online mode)
+                info = {
+                    'top_down_map_vlnce': None,
+                    'gt_map': None,
+                    'pred_map': None,
+                }
+                
+                # 4. Run inference (direct agent.act call, same as run_infer_iphone.py)
+                start_time = time.time()
+                with torch.no_grad():
+                    action = self.agent.act(obs, info, "online_session")
+                infer_time = time.time() - start_time
+                self.total_infer_time += infer_time
+                self.frame_count += 1
+                
                 print(f"[Frame {self.frame_count:04d}] Inference time: {infer_time:.3f}s")
                 
-                # ---------------------------------------------------------
-                # 3. 액션 퍼블리시 (로봇 출발 신호)
-                # ---------------------------------------------------------
+                # 5. Save CSV records (all 5 waypoints, same format as run_infer_iphone.py)
+                if 'arrive_pred' in action and 'action' in action and 'recover_angle' in action:
+                    arrive = int(action['arrive_pred'])
+                    waypoints = action['action']  # shape (5, 2), scale already applied
+                    recover_angles = action['recover_angle']  # shape (5,)
+                    
+                    # Flatten if needed
+                    if isinstance(waypoints, np.ndarray) and waypoints.ndim > 1:
+                        waypoints = waypoints.reshape(-1, 2)
+                    if isinstance(recover_angles, np.ndarray) and recover_angles.ndim > 1:
+                        recover_angles = recover_angles.flatten()
+                    
+                    # Save each of 5 waypoints as CSV record
+                    for subframe_idx in range(min(5, len(waypoints))):
+                        # Restore to original scale (/ PREDICT_SCALE)
+                        dx = waypoints[subframe_idx][0] / PREDICT_SCALE
+                        dy = waypoints[subframe_idx][1] / PREDICT_SCALE
+                        dtheta = np.degrees(recover_angles[subframe_idx]) if subframe_idx < len(recover_angles) else 0.0
+                        
+                        self.csv_records.append({
+                            'frame_idx': self.frame_count,
+                            'subframe_idx': subframe_idx,
+                            'dx': float(dx),
+                            'dy': float(dy),
+                            'dtheta': float(dtheta),
+                            'arrive': arrive,
+                            'infer_time_s': float(infer_time) if subframe_idx == 0 else 0.0
+                        })
+                    
+                    # Simple log output (first waypoint only)
+                    wp = waypoints[0]
+                    dtheta0 = np.degrees(recover_angles[0]) if len(recover_angles) > 0 else 0.0
+                    print(f"  -> arrive={arrive}, dtheta={dtheta0:.2f}, wp[0]=({wp[0]:.4f}, {wp[1]:.4f})")
+                
+                # 6. 액션 퍼블리시 (로봇 출발 신호)
                 waypoint_list = self.publish_action(action)
                 
-                # ---------------------------------------------------------
-                # 4. 시각화 (Visualization) - [수정됨]
-                # ---------------------------------------------------------
+                # 7. 시각화
                 if waypoint_list is not None and len(waypoint_list) > 0:
-                    # 위에서 만든 함수를 호출해 화살표가 그려진 이미지를 받음
                     vis_image = draw_waypoint_arrows_fpv(image, waypoint_list)
-                    self.vis_frame_list.append(vis_image)  # <-- 중요: 그려진 이미지를 저장
+                    self.vis_frame_list.append(vis_image)
                 else:
-                    self.vis_frame_list.append(image.copy()) # 데이터 없으면 원본 저장     
-                # ---------------------------------------------------------
-                # 5. [핵심] 로봇 이동 대기 (Sleep)
-                # ---------------------------------------------------------
-                # 도착(Stop) 상태가 아니라면, 로봇이 움직일 시간을 줍니다.
+                    self.vis_frame_list.append(image.copy())
+                
+                # 8. 로봇 이동 대기
                 if action.get('arrive_pred', 0) == 0:
                     print(f"  >> Moving robot for {ROBOT_MOVE_DURATION}s...")
-                    # 로봇이 실제로 움직이는 시간동안 대기 (이 동안은 다음 이미지 안 찍음)
                     time.sleep(ROBOT_MOVE_DURATION)
-                    
                 else:
                     print("\n" + "=" * 60)
                     print("[OmniNav Online] ARRIVED! Navigation complete.")
                     print("=" * 60)
+                    break
                     
         except KeyboardInterrupt:
             print("\n[OmniNav Online] Stopping...")
@@ -447,8 +421,30 @@ class OmniNavOnlineInference:
 
 
     def shutdown(self):
-        """Clean up resources and save video"""
+        """Clean up resources and save video/CSV"""
         print("[OmniNav Online] Shutting down...")
+        
+        # Save CSV results (same format as run_infer_iphone.py)
+        if len(self.csv_records) > 0:
+            os.makedirs(self.result_path, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_file = os.path.join(self.result_path, f"waypoint_data_online_{timestamp}.csv")
+            
+            with open(csv_file, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['frame_idx', 'subframe_idx', 'dx', 'dy', 'dtheta', 'arrive', 'infer_time_s'])
+                writer.writeheader()
+                writer.writerows(self.csv_records)
+            
+            print(f"[OmniNav Online] CSV saved: {csv_file} ({len(self.csv_records)} records, {len(self.csv_records)//5} frames)")
+        
+        # Print inference time statistics
+        if self.frame_count > 0:
+            avg_infer_time = self.total_infer_time / self.frame_count
+            print(f"\n{'='*60}")
+            print(f"[TIMING] Total inference time: {self.total_infer_time:.3f}s")
+            print(f"[TIMING] Average inference time per frame: {avg_infer_time:.3f}s")
+            print(f"[TIMING] FPS: {1.0/avg_infer_time:.2f}" if avg_infer_time > 0 else "[TIMING] FPS: N/A")
+            print(f"{'='*60}\n")
         
         # Save video if frames were collected
         if self.save_video and len(self.vis_frame_list) > 0:
