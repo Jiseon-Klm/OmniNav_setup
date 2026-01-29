@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """
-OmniNav Robot Controller
-Subscribes to /action topic (waypoints from run_infer_online.py)
-Converts waypoints to cmd_vel and publishes to /scout_mini_base_controller/cmd_vel
+OmniNav Robot Controller (Curvature-based Pure Pursuit Version)
+Subscribes to /action topic and controls Scout Mini via cmd_vel.
 
-Waypoint coordinate system:
-- dx: Forward direction (meters, positive = forward)
-- dy: Left direction (meters, positive = left)
-- dtheta: Heading angle at waypoint (degrees, from recover_angle)
-
-Control strategy:
-- Follow predicted waypoints as accurately as possible
-- Use Pure Pursuit-style control for smooth trajectory
+Algorithm:
+- Transforms Network Coordinates (dx: Right, dy: Forward) to Robot Body Frame (x: Forward, y: Left).
+- Calculates Curvature (kappa) to reach the target point with a smooth arc.
+- Controls linear velocity based on distance/time and angular velocity based on curvature.
 """
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -23,40 +19,37 @@ from geometry_msgs.msg import TwistStamped
 import math
 import json
 import threading
-import numpy as np
-
+import sys
 
 class OmniNavController(Node):
     """
     OmniNav Robot Controller for Scout Mini
-    
-    Converts waypoints (dx, dy, dtheta) to cmd_vel commands.
-    Executes 5 waypoints sequentially, each for 0.2 seconds.
     """
     
     # Robot parameters (Scout Mini)
-    MAX_LINEAR_VEL = 0.7      # m/s (최대 추론속도 반영)
-    MAX_ANGULAR_VEL = 1.5708  # rad/s (90 deg/s)
-    ACTION_DURATION = 1     # seconds per waypoint
-    CONTROL_RATE = 5          # Hz (control loop frequency)
+    MAX_LINEAR_VEL = 0.8       # m/s (약간 상향 조정 가능, 안전을 위해 0.8 설정)
+    MAX_ANGULAR_VEL = 1.5708   # rad/s (90 deg/s)
+    ACTION_DURATION = 1.0      # seconds (명령 유효 시간)
+    CONTROL_RATE = 10          # Hz (제어 주기, 10Hz로 높여 더 부드럽게 반응)
     
     # Control tuning
-    MIN_DISTANCE_THRESHOLD = 0.005  # 5mm 미만은 이동 안함
+    MIN_DISTANCE_THRESHOLD = 0.05  # 5cm 미만은 이동 안 함 (노이즈 필터링 강화)
     
     def __init__(self):
         super().__init__('omninav_controller')
         
         self.callback_group = ReentrantCallbackGroup()
         self.lock = threading.Lock()
+        self._is_active = True  # 종료 시그널 플래그
         
-        # QoS profile (Best Effort, depth=1 for latest message only)
+        # QoS profile
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
         
-        # Subscribe to /action topic (waypoints from run_infer_online.py)
+        # Subscriber
         self.action_sub = self.create_subscription(
             String,
             '/action',
@@ -65,14 +58,14 @@ class OmniNavController(Node):
             callback_group=self.callback_group
         )
         
-        # Publish to /scout_mini_base_controller/cmd_vel
+        # Publisher
         self.cmd_vel_pub = self.create_publisher(
             TwistStamped,
             '/scout_mini_base_controller/cmd_vel',
             qos_profile
         )
         
-        # Control loop timer (5 Hz = 0.2s)
+        # Timer
         self.timer = self.create_timer(
             1.0 / self.CONTROL_RATE,
             self._control_loop,
@@ -80,218 +73,208 @@ class OmniNavController(Node):
         )
         
         # State variables
-        self.waypoint_queue = []         # Current waypoint queue (5 waypoints)
-        self.current_waypoint_idx = -1   # Current waypoint index (-1 = idle)
-        self.waypoint_start_time = 0.0   # Start time of current waypoint
-        self.is_executing = False        # Whether executing waypoints
-        self.new_waypoints_received = False
-        self.arrive_flag = False         # Arrival flag from inference
-        self.current_target_waypoint = None  # Initialize to None (safety)
+        self.current_target_waypoint = None
+        self.waypoint_start_time = 0.0
+        self.is_executing = False
+        self.arrive_flag = False
         
-        # Current velocity command
-        self.current_linear_vel = 0.0
-        self.current_angular_vel = 0.0
-        
-        # Statistics
-        self.total_waypoints_executed = 0
-        self.callback_count = 0  # Debug: count callbacks received
-        
+        # Debug info
         self.get_logger().info("=" * 60)
-        self.get_logger().info("OmniNav Controller Ready")
-        self.get_logger().info(f"  Subscribing to: /action")
-        self.get_logger().info(f"  Publishing to: /scout_mini_base_controller/cmd_vel")
-        self.get_logger().info(f"  Max linear vel: {self.MAX_LINEAR_VEL} m/s")
-        self.get_logger().info(f"  Max angular vel: {self.MAX_ANGULAR_VEL} rad/s ({math.degrees(self.MAX_ANGULAR_VEL):.1f} deg/s)")
-        self.get_logger().info(f"  Action duration: {self.ACTION_DURATION}s per waypoint")
-        self.get_logger().info(f"  Control rate: {self.CONTROL_RATE} Hz")
+        self.get_logger().info("OmniNav Controller (Curvature Pursuit) Ready")
+        self.get_logger().info(f"  Max V: {self.MAX_LINEAR_VEL} m/s, Max W: {self.MAX_ANGULAR_VEL} rad/s")
         self.get_logger().info("=" * 60)
-        
-        # Verify subscription is active (check for publishers)
-        import time
-        time.sleep(0.5)  # Wait for subscription to be established
-        publisher_count = self.action_sub.get_publisher_count()
-        if publisher_count > 0:
-            self.get_logger().info(f"[DEBUG] Subscription active: {publisher_count} publisher(s) found")
-        else:
-            self.get_logger().warn("[DEBUG] WARNING: No publishers found for /action topic!")
-    
+
     def _action_callback(self, msg: String):
-        """
-        Callback for /action topic
-        [수정됨] 큐 방식 제거 -> 최신 목표점 갱신 방식으로 변경
-        """
+        """Callback for /action topic"""
+        if not self._is_active: return
+
         try:
-            self.callback_count += 1
-            self.get_logger().info(f"[DEBUG] Action callback received! (count: {self.callback_count})")
-            
             data = json.loads(msg.data)
             waypoints = data.get('waypoints', [])
             arrive_pred = data.get('arrive_pred', 0)
-            frame_count = data.get('frame_count', 0)
-            
-            self.get_logger().info(f"[DEBUG] Parsed data: {len(waypoints)} waypoints, arrive_pred={arrive_pred}, frame={frame_count}")
             
             if not waypoints:
-                self.get_logger().warn("[DEBUG] Empty waypoints list, ignoring")
                 return
             
             with self.lock:
-                # 큐를 쌓지 않고, 가장 최신의 '첫번째' 목표만 저장합니다.
-                # 추론 노드에서 이미 1개만 보내주지만, 혹시 몰라 0번 인덱스만 취합니다.
+                # 최신 목표점 갱신 (리스트의 첫 번째만 사용)
                 self.current_target_waypoint = waypoints[0]
                 self.arrive_flag = (arrive_pred > 0)
                 
-                # [중요] 새로운 명령이 왔으므로 타이머를 리셋하여 즉시 ACTION_DURATION 동안 동작하게 함
+                # 새 명령 수신 시 타이머 리셋
                 self.waypoint_start_time = self.get_clock().now().nanoseconds / 1e9
                 self.is_executing = True
                 
-                # 로그: 갱신 확인
-                wp = self.current_target_waypoint
-                self.get_logger().info(f"[Frame {frame_count}] Action Updated: dx={wp.get('dx', 0):.4f}, dy={wp.get('dy', 0):.4f}, dtheta={wp.get('dtheta', 0):.2f}°, arrive={arrive_pred}")
-            
-        except json.JSONDecodeError as e:
-            self.get_logger().error(f"JSON decode error: {e}")
-            self.get_logger().error(f"Message data: {msg.data[:200] if len(msg.data) > 200 else msg.data}")
+                # 디버깅용 로그 (필요시 주석 해제)
+                # wp = self.current_target_waypoint
+                # self.get_logger().info(f"Target: dx={wp.get('dx'):.3f}, dy={wp.get('dy'):.3f}")
+
         except Exception as e:
             self.get_logger().error(f"Action callback error: {e}")
-            import traceback
-            self.get_logger().error(traceback.format_exc())
 
     def _waypoint_to_cmd_vel(self, waypoint: dict) -> tuple:
         """
-        [수정됨] 좌표계 변환 적용 (Network -> Robot Body)
+        [핵심 알고리즘 변경] Curvature-based Pure Pursuit
         Network Output: dx (Right+), dy (Forward+)
         Robot Frame:    x (Forward+), y (Left+)
         """
         dx_net = waypoint.get('dx', 0.0)
         dy_net = waypoint.get('dy', 0.0)
-        arrive = waypoint.get('arrive', 0)
         
-        if arrive > 0:
+        # 1. 좌표계 변환 (Network -> Robot Body ISO 8855)
+        # Net Forward (dy) -> Robot X
+        # Net Right (dx)   -> Robot -Y (Left)
+        target_x = dy_net
+        target_y = -dx_net
+        
+        # 2. 거리 제곱 계산 (L^2)
+        dist_sq = target_x**2 + target_y**2
+        distance = math.sqrt(dist_sq)
+        
+        # 노이즈 필터 (너무 가까우면 정지)
+        if distance < self.MIN_DISTANCE_THRESHOLD:
             return 0.0, 0.0
 
         # -----------------------------------------------------------
-        # [CRITICAL FIX] 좌표계 변환
+        # [NEW] Curvature Calculation
+        # kappa = 2 * y / L^2
+        # 로봇이 (0,0)에서 (x,y)로 접선 방향을 유지하며 도달하는 원의 곡률
         # -----------------------------------------------------------
-        target_x = dy_net        # Net Forward -> Robot X (Forward)
-        target_y = -dx_net       # Net Right -> Robot -Y (Left)
-        # -----------------------------------------------------------
+        curvature = (2.0 * target_y) / dist_sq
         
-        distance = math.sqrt(target_x**2 + target_y**2)
-        
-        # 노이즈 필터
-        if distance < self.MIN_DISTANCE_THRESHOLD:
-             return 0.0, 0.0
-
-        # Pure Pursuit Angle
-        target_angle = math.atan2(target_y, target_x)
-        
-        # 속도 계산 (0.2초 내 도달 목표)
+        # 3. 선형 속도 (v) 설정
+        # 기본 전략: 남은 거리를 설정된 시간(ACTION_DURATION) 내에 가도록 설정하되, Max로 제한
+        # 이렇게 하면 거리가 멀수록 빨라지고, 가까워지면 자연스럽게 느려짐
         linear_vel = distance / self.ACTION_DURATION
-        angular_vel = target_angle / self.ACTION_DURATION
         
-        # 속도 제한 (Clipping)
-        if abs(linear_vel) > self.MAX_LINEAR_VEL:
-            scale = self.MAX_LINEAR_VEL / abs(linear_vel)
-            linear_vel *= scale
-            angular_vel *= scale
-            
-        angular_vel = self._clip(angular_vel, -self.MAX_ANGULAR_VEL, self.MAX_ANGULAR_VEL)             
+        # 최대 속도 클리핑
+        linear_vel = self._clip(linear_vel, -self.MAX_LINEAR_VEL, self.MAX_LINEAR_VEL)
+        
+        # 4. 각속도 (omega) 계산
+        # v = r * omega, kappa = 1/r  =>  omega = v * kappa
+        angular_vel = linear_vel * curvature
+        
+        # 각속도 클리핑 (물리적 한계 보호)
+        angular_vel = self._clip(angular_vel, -self.MAX_ANGULAR_VEL, self.MAX_ANGULAR_VEL)
+        
         return linear_vel, angular_vel
-    
+
     def _clip(self, value: float, min_val: float, max_val: float) -> float:
-        """Clip value to range [min_val, max_val]"""
         return max(min_val, min(max_val, value))
-     
+      
     def _control_loop(self):
-        """
-        [수정됨] 단일 액션 실행 루프
-        - 새로운 명령이 들어온 시점부터 정확히 ACTION_DURATION 동안만 움직이고
-        - 다음 명령이 안 오면 멈춤 (Safety)
-        """
+        """주기적 제어 루프"""
+        if not self._is_active: return
+
         current_time = self.get_clock().now().nanoseconds / 1e9
         linear_vel = 0.0
         angular_vel = 0.0
         
         with self.lock:
-            # [CRITICAL FIX] current_target_waypoint가 None이 아니고, is_executing이 True일 때만 움직임
             if self.is_executing and self.current_target_waypoint is not None:
                 elapsed = current_time - self.waypoint_start_time
                 
-                # ACTION_DURATION 이내라면 계속 움직임
+                # 유효 시간 내이며 도착 상태가 아닐 때만 계산
                 if elapsed < self.ACTION_DURATION:
                     if self.arrive_flag:
+                         # 도착 예측 시 정지
                         linear_vel, angular_vel = 0.0, 0.0
+                        self.is_executing = False
                     else:
                         linear_vel, angular_vel = self._waypoint_to_cmd_vel(self.current_target_waypoint)
                 else:
-                    # ACTION_DURATION이 지났는데 아직 새 명령이 안 왔으면 정지 (Safety)
+                    # Timeout (Safety)
                     self.is_executing = False
                     linear_vel = 0.0
                     angular_vel = 0.0
-                    self.get_logger().debug(f"Action duration ({self.ACTION_DURATION}s) elapsed, stopping")
             else:
-                # 명령이 없으면 항상 정지 (Safety)
+                # Idle state
                 linear_vel = 0.0
                 angular_vel = 0.0
-                if self.is_executing:
-                    # 이전에 실행 중이었는데 갑자기 waypoint가 None이 되면 로그
-                    self.get_logger().warn("[DEBUG] is_executing=True but current_target_waypoint is None, stopping")
-                    self.is_executing = False
-            
-            # 상태 저장
-            self.current_linear_vel = linear_vel
-            self.current_angular_vel = angular_vel
-        
-        # Publish (항상 0.0이어도 publish하여 명시적으로 정지 신호 전송)
-        self._publish_cmd_vel(linear_vel, angular_vel)   
+
+        self._publish_cmd_vel(linear_vel, angular_vel)
     
     def _publish_cmd_vel(self, linear_vel: float, angular_vel: float):
-        """
-        Publish cmd_vel to /scout_mini_base_controller/cmd_vel
-        """
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'base_link'
-        msg.twist.linear.x = linear_vel
-        msg.twist.linear.y = 0.0
-        msg.twist.linear.z = 0.0
-        msg.twist.angular.x = 0.0
-        msg.twist.angular.y = 0.0
-        msg.twist.angular.z = angular_vel
-        
+        msg.twist.linear.x = float(linear_vel)
+        msg.twist.angular.z = float(angular_vel)
         self.cmd_vel_pub.publish(msg)
     
     def stop_robot(self):
-        """Emergency stop"""
-        self.get_logger().warn("Emergency stop!")
+        """Emergency stop & Cleanup"""
+        self._is_active = False
+        self.get_logger().warn("Stopping robot and cleaning up...")
+        
+        # 즉시 정지 명령 3회 전송 (패킷 손실 대비)
+        for _ in range(3):
+            self._publish_cmd_vel(0.0, 0.0)
+            
+        # 내부 상태 초기화
         with self.lock:
             self.is_executing = False
-            self.current_waypoint_idx = -1
             self.current_target_waypoint = None
-            self.current_linear_vel = 0.0
-            self.current_angular_vel = 0.0
-            self.waypoint_queue = []
-        
-        self._publish_cmd_vel(0.0, 0.0)
 
+
+import signal
+import sys
 
 def main(args=None):
     rclpy.init(args=args)
     
     node = OmniNavController()
+    
+    # 멀티스레드 실행기 (스레드 수 자동 할당)
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     
+    # [좀비 방지 핵심 1] 종료 시그널 핸들러 정의
+    # Ctrl+C (SIGINT)나 kill 명령 (SIGTERM)을 받으면 실행되는 함수
+    def signal_handler(sig, frame):
+        node.get_logger().warn(f"Received signal {sig}. Initiating forceful shutdown...")
+        
+        # 1. 로봇 즉시 정지 (가장 중요)
+        node.stop_robot()
+        
+        # 2. 실행기 종료 (스레드 정리)
+        try:
+            executor.shutdown()
+        except Exception as e:
+            pass # 이미 종료 중이면 무시
+            
+        # 3. 노드 파괴
+        try:
+            node.destroy_node()
+        except:
+            pass
+            
+        # 4. ROS 종료
+        if rclpy.ok():
+            rclpy.shutdown()
+            
+        # 5. 프로세스 강제 종료 (가장 확실한 방법)
+        node.get_logger().info("Forcefully exiting process.")
+        sys.exit(0)
+
+    # [좀비 방지 핵심 2] 시그널 핸들러 등록
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     try:
+        # 실행
         executor.spin()
     except KeyboardInterrupt:
-        node.get_logger().info("Shutting down...")
-        node.stop_robot()
+        pass # signal_handler가 이미 처리함
+    except ExternalShutdownException:
+        pass # ROS2 시스템 종료 시그널
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
+        # 혹시 spin이 그냥 끝났을 경우를 대비한 안전망
+        if rclpy.ok():
+            node.stop_robot()
+            executor.shutdown()
+            node.destroy_node()
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

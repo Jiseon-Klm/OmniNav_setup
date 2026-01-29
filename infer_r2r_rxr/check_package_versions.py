@@ -82,7 +82,7 @@ def main():
     print(f"🐍 Python: {py_version}\n")
     
     # Core packages used in run_infer_iphone_panorama.py
-    # (package_name, import_name) - 유니크한 패키지만
+    # (package_name, import_name)
     packages = [
         ("numpy", "numpy"),
         ("torch", "torch"),
@@ -95,21 +95,23 @@ def main():
         ("safetensors", "safetensors"),
     ]
     
-    # Get installed package versions
-    installed_packages = []
+    # Get package versions and status
+    package_info = []
     for package_name, import_name in packages:
         version = get_package_version(package_name, import_name)
         if version is not None:
-            installed_packages.append((package_name, str(version)))
+            status = "✅ INSTALLED"
+            version_str = str(version)
+        else:
+            status = "❌ NOT INSTALLED"
+            version_str = "-"
+        package_info.append((package_name, status, version_str))
     
     # Print table
-    if installed_packages:
-        print(f"{'Package':<30} {'Version':<50}")
-        print("-" * 80)
-        for pkg_name, pkg_version in sorted(installed_packages):
-            print(f"{pkg_name:<30} {pkg_version:<50}")
-    else:
-        print("No packages found")
+    print(f"{'Package':<25} {'Status':<20} {'Version':<35}")
+    print("-" * 80)
+    for pkg_name, status, version in package_info:
+        print(f"{pkg_name:<25} {status:<20} {version:<35}")
     
     # PyTorch CUDA info (간단히)
     try:
