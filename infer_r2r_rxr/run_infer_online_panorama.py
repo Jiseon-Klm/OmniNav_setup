@@ -31,7 +31,7 @@ import math
 # ROS2 imports
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
@@ -213,6 +213,13 @@ class OmniNavOnlineInference:
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
+        # /action: must match omninav_control subscriber exactly (all policies)
+        qos_action = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.VOLATILE
+        )
         
         # Image subscribers (front, left, right) only when not using panorama
         if not self.use_panorama:
@@ -238,7 +245,7 @@ class OmniNavOnlineInference:
             pass
         
         # Action publisher (waypoints as JSON string)
-        self.action_pub = self.ros_node.create_publisher(String, '/action', qos_profile)
+        self.action_pub = self.ros_node.create_publisher(String, '/action', qos_action)
         
         print("=" * 60)
         print("[OmniNav Online] ROS2 Node Ready")
@@ -340,7 +347,7 @@ class OmniNavOnlineInference:
             return None, None, None, None
     
     def publish_action(self, action: dict):
-        """Publish first waypoint to /action topic, return full waypoint list for visualization"""
+        """Publish all 5 waypoints to /action topic (for sequential execution), return full waypoint list for visualization"""
         if 'arrive_pred' not in action or 'action' not in action or 'recover_angle' not in action:
             print("[OmniNav Online] Invalid action format, skipping publish")
             return None
@@ -369,12 +376,11 @@ class OmniNavOnlineInference:
                 'arrive': arrive
             })
         
-        # Control: publish only first waypoint
-        if len(full_waypoint_list) > 0:
-            control_waypoint_list = [full_waypoint_list[0]]
-        else:
+        # Control: publish all 5 waypoints for sequential execution
+        if len(full_waypoint_list) == 0:
             print(f"[Frame {self.frame_count:04d}] ERROR: full_waypoint_list is empty!")
             return None
+        control_waypoint_list = full_waypoint_list  # all 5 waypoints
 
         # Create JSON message
         msg_data = {
@@ -402,6 +408,17 @@ class OmniNavOnlineInference:
         move_duration = inference_interval  # time to wait between inferences (robot move duration)
         PREDICT_SCALE = 0.3
         info = {'top_down_map_vlnce': None, 'gt_map': None, 'pred_map': None}
+        
+        # Wait for /action subscriber (omninav_control) so messages are not lost
+        wait_start = time.time()
+        while self.action_pub.get_subscription_count() == 0:
+            if time.time() - wait_start > 30.0:
+                print("[OmniNav Online] WARNING: No /action subscriber after 30s. Start omninav_control first? Proceeding anyway.")
+                break
+            print("[OmniNav Online] Waiting for /action subscriber (run omninav_control in another terminal)...")
+            time.sleep(0.5)
+        if self.action_pub.get_subscription_count() > 0:
+            print("[OmniNav Online] /action subscriber connected.")
         
         if self.use_panorama:
             self._run_loop_panorama(move_duration, PREDICT_SCALE, info)
@@ -635,7 +652,6 @@ def main():
     parser.add_argument("--inference-interval", type=float, default=1.0, help="Time between inferences in seconds (default: 1.0)")
     # parser.add_argument("--save-video", action="store_true", default=True, help="Save visualization as MP4 video (default: True)")
     parser.add_argument("--no-save-video", action="store_true", help="Disable video saving")
-    
     args = parser.parse_args()
     
     if not args.data_dir and not args.instruction:

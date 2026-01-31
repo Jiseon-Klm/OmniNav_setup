@@ -11,7 +11,7 @@ Algorithm:
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
@@ -28,8 +28,8 @@ class OmniNavController(Node):
     
     # Robot parameters (Scout Mini)
     MAX_LINEAR_VEL = 0.8       # m/s (약간 상향 조정 가능, 안전을 위해 0.8 설정)
-    MAX_ANGULAR_VEL = 1.5708   # rad/s (90 deg/s)
-    ACTION_DURATION = 1.0      # seconds (명령 유효 시간)
+    MAX_ANGULAR_VEL = 0.5235   # rad/s (로봇 최대 각속도, ~30 deg/s)
+    WAYPOINT_DURATION = 0.2    # seconds per waypoint (5 waypoints = 1.0s total)
     CONTROL_RATE = 10          # Hz (제어 주기, 10Hz로 높여 더 부드럽게 반응)
     
     # Control tuning
@@ -42,11 +42,18 @@ class OmniNavController(Node):
         self.lock = threading.Lock()
         self._is_active = True  # 종료 시그널 플래그
         
-        # QoS profile
+        # QoS profile (cmd_vel + /action: BEST_EFFORT so publisher/subscriber match)
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
+        )
+        # /action: must match run_infer_online_panorama publisher exactly (all policies)
+        qos_action = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.VOLATILE
         )
         
         # Subscriber
@@ -54,7 +61,7 @@ class OmniNavController(Node):
             String,
             '/action',
             self._action_callback,
-            qos_profile,
+            qos_action,
             callback_group=self.callback_group
         )
         
@@ -72,9 +79,9 @@ class OmniNavController(Node):
             callback_group=self.callback_group
         )
         
-        # State variables
-        self.current_target_waypoint = None
-        self.waypoint_start_time = 0.0
+        # State variables (5-waypoint sequential execution)
+        self.current_waypoint_list = []   # list of waypoints to execute
+        self.waypoint_batch_start_time = 0.0
         self.is_executing = False
         self.arrive_flag = False
         
@@ -82,6 +89,7 @@ class OmniNavController(Node):
         self.get_logger().info("=" * 60)
         self.get_logger().info("OmniNav Controller (Curvature Pursuit) Ready")
         self.get_logger().info(f"  Max V: {self.MAX_LINEAR_VEL} m/s, Max W: {self.MAX_ANGULAR_VEL} rad/s")
+        self.get_logger().info(f"  Waypoint duration: {self.WAYPOINT_DURATION}s per waypoint (5 wp = {5 * self.WAYPOINT_DURATION}s)")
         self.get_logger().info("=" * 60)
 
     def _action_callback(self, msg: String):
@@ -96,18 +104,16 @@ class OmniNavController(Node):
             if not waypoints:
                 return
             
+            self.get_logger().info(f"Received /action: {len(waypoints)} waypoints, arrive={arrive_pred}")
+            
             with self.lock:
-                # 최신 목표점 갱신 (리스트의 첫 번째만 사용)
-                self.current_target_waypoint = waypoints[0]
+                # 5개 waypoint 전체를 순차 실행할 리스트로 저장
+                self.current_waypoint_list = list(waypoints)
                 self.arrive_flag = (arrive_pred > 0)
                 
-                # 새 명령 수신 시 타이머 리셋
-                self.waypoint_start_time = self.get_clock().now().nanoseconds / 1e9
+                # 새 명령 수신 시 배치 시작 시각 리셋
+                self.waypoint_batch_start_time = self.get_clock().now().nanoseconds / 1e9
                 self.is_executing = True
-                
-                # 디버깅용 로그 (필요시 주석 해제)
-                # wp = self.current_target_waypoint
-                # self.get_logger().info(f"Target: dx={wp.get('dx'):.3f}, dy={wp.get('dy'):.3f}")
 
         except Exception as e:
             self.get_logger().error(f"Action callback error: {e}")
@@ -143,9 +149,8 @@ class OmniNavController(Node):
         curvature = (2.0 * target_y) / dist_sq
         
         # 3. 선형 속도 (v) 설정
-        # 기본 전략: 남은 거리를 설정된 시간(ACTION_DURATION) 내에 가도록 설정하되, Max로 제한
-        # 이렇게 하면 거리가 멀수록 빨라지고, 가까워지면 자연스럽게 느려짐
-        linear_vel = distance / self.ACTION_DURATION
+        # 기본 전략: 남은 거리를 WAYPOINT_DURATION(0.2s) 내에 가도록 설정하되, Max로 제한
+        linear_vel = distance / self.WAYPOINT_DURATION
         
         # 최대 속도 클리핑
         linear_vel = self._clip(linear_vel, -self.MAX_LINEAR_VEL, self.MAX_LINEAR_VEL)
@@ -163,7 +168,7 @@ class OmniNavController(Node):
         return max(min_val, min(max_val, value))
       
     def _control_loop(self):
-        """주기적 제어 루프"""
+        """주기적 제어 루프 (5 waypoint 순차 실행, 각 0.2초)"""
         if not self._is_active: return
 
         current_time = self.get_clock().now().nanoseconds / 1e9
@@ -171,19 +176,21 @@ class OmniNavController(Node):
         angular_vel = 0.0
         
         with self.lock:
-            if self.is_executing and self.current_target_waypoint is not None:
-                elapsed = current_time - self.waypoint_start_time
+            if self.is_executing and len(self.current_waypoint_list) > 0:
+                elapsed = current_time - self.waypoint_batch_start_time
+                total_batch_duration = len(self.current_waypoint_list) * self.WAYPOINT_DURATION
                 
-                # 유효 시간 내이며 도착 상태가 아닐 때만 계산
-                if elapsed < self.ACTION_DURATION:
-                    if self.arrive_flag:
-                         # 도착 예측 시 정지
-                        linear_vel, angular_vel = 0.0, 0.0
-                        self.is_executing = False
-                    else:
-                        linear_vel, angular_vel = self._waypoint_to_cmd_vel(self.current_target_waypoint)
+                if self.arrive_flag:
+                    # 도착 예측 시 즉시 정지
+                    linear_vel, angular_vel = 0.0, 0.0
+                    self.is_executing = False
+                elif elapsed < total_batch_duration:
+                    # 현재 구간에 해당하는 waypoint 인덱스 (0.2초마다 다음 waypoint)
+                    waypoint_index = min(int(elapsed / self.WAYPOINT_DURATION), len(self.current_waypoint_list) - 1)
+                    current_waypoint = self.current_waypoint_list[waypoint_index]
+                    linear_vel, angular_vel = self._waypoint_to_cmd_vel(current_waypoint)
                 else:
-                    # Timeout (Safety)
+                    # 배치 종료 (5 * 0.2s 경과)
                     self.is_executing = False
                     linear_vel = 0.0
                     angular_vel = 0.0
@@ -214,7 +221,7 @@ class OmniNavController(Node):
         # 내부 상태 초기화
         with self.lock:
             self.is_executing = False
-            self.current_target_waypoint = None
+            self.current_waypoint_list = []
 
 
 import signal
