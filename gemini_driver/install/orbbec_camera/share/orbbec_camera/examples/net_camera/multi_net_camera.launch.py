@@ -1,0 +1,1 @@
+/workspace/OmniNav/gemini_driver/orbbec_camera/orbbec_camera/examples/net_camera/multi_net_camera.launch.py

@@ -1,0 +1,1 @@
+/workspace/OmniNav/gemini_driver/orbbec_camera/orbbec_camera/scripts/service_benchmark_node.py

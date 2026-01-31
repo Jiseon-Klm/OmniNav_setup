@@ -1,0 +1,1 @@
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_generator_cpp/orbbec_camera_msgs/srv/detail/get_bool__type_support.hpp

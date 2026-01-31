@@ -1,0 +1,9 @@
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//libOrbbecSDK.so
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//extensions/firmwareupdater/libfirmwareupdater.so
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//extensions/filters/libFilterProcessor.so
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//extensions/filters/libob_priv_filter.so
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//extensions/depthengine/libdepthengine.so
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//extensions/depthengine/libdepthengine.so.2.0
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//extensions/frameprocessor/libob_frame_processor.so
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//libOrbbecSDK.so.2
+/workspace/OmniNav/gemini_driver/install/orbbec_camera/lib//libOrbbecSDK.so.2.7.2

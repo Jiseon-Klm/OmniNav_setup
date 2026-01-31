@@ -1,0 +1,1 @@
+/workspace/OmniNav/gemini_driver/orbbec_camera/orbbec_camera/examples/multi_camera_synced_verification_tool/gemini_330_series_synced_verify.launch.py

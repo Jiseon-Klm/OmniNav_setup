@@ -1,0 +1,1 @@
+/workspace/OmniNav/gemini_driver/orbbec_camera/orbbec_camera/examples/gmsl_camera/multi_gmsl_camera_synced.launch.py

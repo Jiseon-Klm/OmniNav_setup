@@ -1,0 +1,17 @@
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:msg/DeviceInfo.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:msg/DeviceStatus.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:msg/Extrinsics.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:msg/Metadata.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:msg/IMUInfo.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:msg/RGBD.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/GetBool.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/GetDeviceInfo.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/GetCameraInfo.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/GetInt32.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/GetString.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/SetFilter.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/SetInt32.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/SetString.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/SetArrays.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/GetUserCalibParams.idl
+/workspace/OmniNav/gemini_driver/build/orbbec_camera_msgs/rosidl_adapter/orbbec_camera_msgs:srv/SetUserCalibParams.idl
