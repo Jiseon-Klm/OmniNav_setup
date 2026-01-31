@@ -399,18 +399,18 @@ class OmniNavOnlineInference:
         
     def run_loop(self, inference_interval: float = 1.0):
         """Main inference loop - Step-by-Step Mode. Uses panorama front/left/right from disk if data_dir was set."""
-        ROBOT_MOVE_DURATION = 1.0
+        move_duration = inference_interval  # time to wait between inferences (robot move duration)
         PREDICT_SCALE = 0.3
         info = {'top_down_map_vlnce': None, 'gt_map': None, 'pred_map': None}
         
         if self.use_panorama:
-            self._run_loop_panorama(ROBOT_MOVE_DURATION, PREDICT_SCALE, info)
+            self._run_loop_panorama(move_duration, PREDICT_SCALE, info)
         else:
-            self._run_loop_ros(ROBOT_MOVE_DURATION, PREDICT_SCALE, info)
+            self._run_loop_ros(move_duration, PREDICT_SCALE, info)
     
-    def _run_loop_panorama(self, ROBOT_MOVE_DURATION, PREDICT_SCALE, info):
+    def _run_loop_panorama(self, move_duration, PREDICT_SCALE, info):
         """Iterate frame folders; load front/left/right from disk (same structure as run_infer_iphone_panorama)."""
-        print(f"\n[OmniNav Online] Starting Panorama Loop ({len(self.frame_folders)} frames, Move Duration: {ROBOT_MOVE_DURATION}s)")
+        print(f"\n[OmniNav Online] Starting Panorama Loop ({len(self.frame_folders)} frames, Move Duration: {move_duration}s)")
         print("[OmniNav Online] Running inference loop. Press Ctrl+C to stop.")
         print("=" * 60)
         try:
@@ -462,16 +462,16 @@ class OmniNavOnlineInference:
                     print("[OmniNav Online] ARRIVED! Navigation complete.")
                     print("=" * 60)
                     break
-                print(f"  >> Moving robot for {ROBOT_MOVE_DURATION}s...")
-                time.sleep(ROBOT_MOVE_DURATION)
+                print(f"  >> Moving robot for {move_duration}s...")
+                time.sleep(move_duration)
         except KeyboardInterrupt:
             print("\n[OmniNav Online] Stopping...")
         finally:
             self.shutdown()
     
-    def _run_loop_ros(self, ROBOT_MOVE_DURATION, PREDICT_SCALE, info):
+    def _run_loop_ros(self, move_duration, PREDICT_SCALE, info):
         """Use subscribed front/left/right images from /cam_front/color/image_raw, /cam_left/color/image_raw, /cam_right/color/image_raw."""
-        print(f"\n[OmniNav Online] Starting Step-by-Step Loop (Move Duration: {ROBOT_MOVE_DURATION}s)")
+        print(f"\n[OmniNav Online] Starting Step-by-Step Loop (Move Duration: {move_duration}s)")
         print("[OmniNav Online] Waiting for first images (front, left, right)...")
         while True:
             front, left, right, _ = self.get_latest_images()
@@ -536,8 +536,8 @@ class OmniNavOnlineInference:
                     print("[OmniNav Online] ARRIVED! Navigation complete.")
                     print("=" * 60)
                     break
-                print(f"  >> Moving robot for {ROBOT_MOVE_DURATION}s...")
-                time.sleep(ROBOT_MOVE_DURATION)
+                print(f"  >> Moving robot for {move_duration}s...")
+                time.sleep(move_duration)
         except KeyboardInterrupt:
             print("\n[OmniNav Online] Stopping...")
         finally:
@@ -570,59 +570,59 @@ class OmniNavOnlineInference:
             print(f"[TIMING] FPS: {1.0/avg_infer_time:.2f}" if avg_infer_time > 0 else "[TIMING] FPS: N/A")
             print(f"{'='*60}\n")
         
-        # Save video if frames were collected
-        if self.save_video and len(self.vis_frame_list) > 0:
-            self._save_video()
+        # # Save video if frames were collected
+        # if self.save_video and len(self.vis_frame_list) > 0:
+        #     self._save_video()
         
         self.agent.reset()
         self.ros_node.destroy_node()
         rclpy.shutdown()
         print("[OmniNav Online] Shutdown complete")
     
-    def _save_video(self):
-        """Save visualized frames as MP4 video"""
-        if len(self.vis_frame_list) == 0:
-            print("[OmniNav Online] No frames to save")
-            return
+    # def _save_video(self):
+        # """Save visualized frames as MP4 video"""
+        # if len(self.vis_frame_list) == 0:
+        #     print("[OmniNav Online] No frames to save")
+        #     return
         
         # Create video output directory (only create if needed)
-        os.makedirs(self.result_path, exist_ok=True)
+        # os.makedirs(self.result_path, exist_ok=True)
         
         # Save video directly to result_path (no subdirectories)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        video_path = os.path.join(self.result_path, f"omninav_online_{timestamp}.mp4")
+        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # video_path = os.path.join(self.result_path, f"omninav_online_{timestamp}.mp4")
         
-        print(f"\n[OmniNav Online] Saving {len(self.vis_frame_list)} frames to {video_path}...")
+        # print(f"\n[OmniNav Online] Saving {len(self.vis_frame_list)} frames to {video_path}...")
         
         # Get frame dimensions from first frame
-        h, w = self.vis_frame_list[0].shape[:2]
+        # h, w = self.vis_frame_list[0].shape[:2]
         
         # Define codec and create VideoWriter
         # Use 'mp4v' codec (works on most systems)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        fps = 1.0  # 1 frame per second (matching inference interval)
-        video_writer = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+        # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # fps = 1.0  # 1 frame per second (matching inference interval)
+        # video_writer = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
         
-        if not video_writer.isOpened():
-            print(f"[OmniNav Online] Warning: Failed to open video writer, trying alternative codec...")
-            # Try alternative codec
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            video_writer = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+        # if not video_writer.isOpened():
+        #     print(f"[OmniNav Online] Warning: Failed to open video writer, trying alternative codec...")
+        #     # Try alternative codec
+        #     fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        #     video_writer = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
         
-        if not video_writer.isOpened():
-            print(f"[OmniNav Online] Error: Failed to create video file")
-            return
+        # if not video_writer.isOpened():
+        #     print(f"[OmniNav Online] Error: Failed to create video file")
+        #     return
         
-        # Write frames
-        for frame in self.vis_frame_list:
-            # [수정됨] RGB(Matplotlib/PIL 기준) -> BGR(OpenCV 비디오 기준) 변환
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            video_writer.write(frame_bgr)
+        # # Write frames
+        # for frame in self.vis_frame_list:
+        #     # [수정됨] RGB(Matplotlib/PIL 기준) -> BGR(OpenCV 비디오 기준) 변환
+        #     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        #     video_writer.write(frame_bgr)
             
         
-        video_writer.release()
-        print(f"[OmniNav Online] Video saved: {video_path}")
-        print(f"[OmniNav Online] Video info: {len(self.vis_frame_list)} frames, {w}x{h}, {fps} fps")
+        # video_writer.release()
+        # print(f"[OmniNav Online] Video saved: {video_path}")
+        # print(f"[OmniNav Online] Video info: {len(self.vis_frame_list)} frames, {w}x{h}, {fps} fps")
 
 
 def main():
@@ -633,7 +633,7 @@ def main():
     parser.add_argument("--data-dir", type=str, default=None, help="Data dir with panorama structure: data_dir/instruction.txt, data_dir/rgb/frame_XXXX/frame_XXXX_front.jpg, _left.jpg, _right.jpg (same as run_infer_iphone_panorama). If set, front/left/right are loaded from disk per frame.")
     parser.add_argument("--result-path", type=str, default="./results", help="Result save path")
     parser.add_argument("--inference-interval", type=float, default=1.0, help="Time between inferences in seconds (default: 1.0)")
-    parser.add_argument("--save-video", action="store_true", default=True, help="Save visualization as MP4 video (default: True)")
+    # parser.add_argument("--save-video", action="store_true", default=True, help="Save visualization as MP4 video (default: True)")
     parser.add_argument("--no-save-video", action="store_true", help="Disable video saving")
     
     args = parser.parse_args()
@@ -641,7 +641,7 @@ def main():
     if not args.data_dir and not args.instruction:
         parser.error("Either --instruction or --data-dir is required")
     
-    save_video = args.save_video and not args.no_save_video
+    # save_video = args.save_video and not args.no_save_video
     
     inference = OmniNavOnlineInference(
         model_path=args.model_path,
@@ -649,11 +649,11 @@ def main():
         result_path=args.result_path,
         data_dir=args.data_dir
     )
-    inference.save_video = save_video
-    if save_video:
-        print("[OmniNav Online] Video saving enabled")
-    else:
-        print("[OmniNav Online] Video saving disabled")
+    # inference.save_video = save_video
+    # if save_video:
+    #     print("[OmniNav Online] Video saving enabled")
+    # else:
+    #     print("[OmniNav Online] Video saving disabled")
     
     inference.run_loop(inference_interval=args.inference_interval)
 
