@@ -16,102 +16,122 @@ def generate_launch_description():
         launch_file_name
     )
 
-    # 크롭 노드 스크립트 경로
     crop_script_path = os.path.join(
         os.path.dirname(os.path.realpath(__file__)), 
         'crop_node.py'
     )
 
     # ================= 설정 값 =================
-    # 1280x800 @ 5fps (안정성 확보)
+    # 하드웨어: 640x400 @ 10fps -> Python: 480x426 변환
     req_width = '640'
     req_height = '400'
     req_fps = '10'
+    
+    # [최적화] RGB 외 불필요한 기능 All Off (대역폭 절약)
+    common_params = {
+        # --- [1] 기본 센서 끄기 ---
+        'enable_point_cloud': 'false',
+        'enable_colored_point_cloud': 'false',
+        'enable_depth': 'false',
+        'enable_infra1': 'false',
+        'enable_infra2': 'false',
+        'enable_accel': 'false',
+        'enable_gyro': 'false',
+        'enable_audio': 'false',
+        
+        # --- [2] 잡다한 토픽/기능 제거 (여기가 핵심) ---
+        'publish_tf': 'false',              # TF 좌표계 제거
+        'enable_publish_extrinsic': 'false',
+        'enable_d2c_viewer': 'false',
+        'enable_metadata': 'false',         # metadata 토픽 제거
+        'enable_soft_filter': 'false',      # depth_filter_status 제거
+        'diagnostic_publish_rate': '0.0',   # device_status 제거 (0.0=끄기)
+        
+        # --- [3] 해상도 설정 ---
+        'color_width': req_width,
+        'color_height': req_height,
+        'color_fps': req_fps,
+    }
     # ==========================================
 
     # ---------------------------------------------------------
-    # 1. Front Camera (즉시 실행)
+    # 1. Front Camera (G5) - 즉시 실행
     # ---------------------------------------------------------
+    ns_front = 'cam_front'
     
+    # 파라미터 복사 후 시리얼/이름 설정
+    front_params = common_params.copy()
+    front_params.update({
+        'camera_name': ns_front,
+        'serial_number': 'CP82841000G5',  # [Front]
+        'device_num': '1'
+    })
+
     cam_front_driver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(orbbec_launch_file),
-        launch_arguments={
-            'camera_name': 'cam_front',           # 드라이버 이름 통일
-            'serial_number': 'CP82841000G5',  
-            'device_num': '1',
-            'enable_point_cloud': 'false',
-            'enable_colored_point_cloud': 'false',
-            'enable_depth': 'false',
-            'color_width': req_width,
-            'color_height': req_height,
-            'color_fps': req_fps,
-        }.items()
+        launch_arguments=front_params.items()
     )
     
     cam_front_cropper = Node(
         package=None, executable=sys.executable,
         arguments=[crop_script_path],
-        namespace='cam_front',                    # [중요] 드라이버와 같은 네임스페이스
+        namespace=ns_front,
         output='screen',
         parameters=[{'target_w': 480, 'target_h': 426}]
     )
 
     # ---------------------------------------------------------
-    # 2. Right Camera (2초 딜레이)
+    # 2. Right Camera (C2) - 2초 딜레이
     # ---------------------------------------------------------
+    ns_right = 'cam_right'
+
+    right_params = common_params.copy()
+    right_params.update({
+        'camera_name': ns_right,
+        'serial_number': 'CP82841000C2',  # [Right]
+        'device_num': '2'
+    })
 
     cam_right_driver = TimerAction(
-        period=2.0,  # 2초 뒤 실행 (USB 충돌 방지)
+        period=4.0,
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(orbbec_launch_file),
-            launch_arguments={
-                'camera_name': 'cam_right',         # 드라이버 이름 통일
-                'serial_number': 'CP82841000C2',  
-                'device_num': '2',
-                'enable_point_cloud': 'false',
-                'enable_colored_point_cloud': 'false',
-                'enable_depth': 'false',
-                'color_width': req_width,
-                'color_height': req_height,
-                'color_fps': req_fps,
-            }.items()
+            launch_arguments=right_params.items()
         )]
     )
 
     cam_right_cropper = Node(
         package=None, executable=sys.executable,
         arguments=[crop_script_path],
-        namespace='cam_right',                  # [중요] 드라이버와 같은 네임스페이스
+        namespace=ns_right,
         output='screen',
         parameters=[{'target_w': 480, 'target_h': 426}]
     )
 
     # ---------------------------------------------------------
-    # 3. Left Camera (4초 딜레이)
+    # 3. Left Camera (KH) - 4초 딜레이
     # ---------------------------------------------------------
+    ns_left = 'cam_left'
+
+    left_params = common_params.copy()
+    left_params.update({
+        'camera_name': ns_left,
+        'serial_number': 'CP82841000KH',  # [Left]
+        'device_num': '3'
+    })
 
     cam_left_driver = TimerAction(
-        period=4.0,  # 4초 뒤 실행
+        period=8.0,
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(orbbec_launch_file),
-            launch_arguments={
-                'camera_name': 'cam_left',          # 드라이버 이름 통일
-                'serial_number': 'CP82841000KH',
-                'device_num': '3',
-                'enable_point_cloud': 'false',
-                'enable_colored_point_cloud': 'false',
-                'enable_depth': 'false',
-                'color_width': req_width,
-                'color_height': req_height,
-                'color_fps': req_fps,
-            }.items()
+            launch_arguments=left_params.items()
         )]
     )
 
     cam_left_cropper = Node(
         package=None, executable=sys.executable,
         arguments=[crop_script_path],
-        namespace='cam_left',                   # [중요] 드라이버와 같은 네임스페이스
+        namespace=ns_left,
         output='screen',
         parameters=[{'target_w': 480, 'target_h': 426}]
     )
